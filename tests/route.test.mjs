@@ -26,3 +26,20 @@ test("explicit API and ChatGPT never silently switch payer",()=>{
   assert.equal(requestRoute({...base,mode:"local",localOnly:true}).kind,"local");
   assert.equal(requestRoute({...base,mode:"auto",localOnly:true}).kind,"blocked");
 });
+
+test("one-shot model and API choices override only the current request target",()=>{
+  const chooseTarget=vm.runInNewContext(source + "\nchooseTarget;");
+  const profiles={configured:{model:"primary-cloud"},second:{model:"second-default",endpoint:"https://second.example"}};
+  const use=choice=>chooseTarget(choice,"auto","primary-local","configured",profiles);
+  assert.equal(use({mode:"local",model:"secondary-local"}).localModel,"secondary-local");
+  const cloud=use({mode:"cloud",profileId:"second",model:"one-shot-model"});
+  assert.equal(cloud.mode,"cloud");
+  assert.equal(cloud.profileId,"second");
+  assert.equal(cloud.provider.endpoint,"https://second.example");
+  assert.equal(cloud.provider.model,"one-shot-model");
+  assert.equal(profiles.second.model,"second-default");
+  assert.equal(use({mode:"plan",model:"one-shot-slug"}).planModel,"one-shot-slug");
+  assert.equal(use(undefined).provider.model,"primary-cloud");
+  assert.equal(use(undefined).localModel,"primary-local");
+  assert.equal(use(undefined).mode,"auto");
+});

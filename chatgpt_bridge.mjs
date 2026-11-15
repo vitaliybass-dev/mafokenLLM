@@ -116,6 +116,14 @@ const server=createServer(async (req,res)=>{
         record(res,await snapshot());
         break;
       }
+      case "GET /models": {
+        stage="models";
+        const cancel=new AbortController();
+        res.once("close",()=>cancel.abort());
+        const models=await client.listModels({signal:cancel.signal});
+        record(res,{models:models.map(model=>({id:model.slug,name:model.displayName || model.slug}))});
+        break;
+      }
       case "POST /respond": {
         stage="response";
         const cancel=new AbortController();
@@ -129,8 +137,12 @@ const server=createServer(async (req,res)=>{
         }
         const data=JSON.parse(Buffer.concat(chunks).toString("utf8"));
         const models=await client.listModels({signal:cancel.signal});
-        const model=models[0];
-        if(!model){record(res,{error:"Тариф ChatGPT не вернул доступные модели."});break;}
+        const model=data.model ? models.find(item=>item.slug===data.model) : models[0];
+        if(!model){
+          record(res,{error:data.model ? "Выбранная модель недоступна по тарифу ChatGPT. Выберите другую."
+            : "Тариф ChatGPT не вернул доступные модели."});
+          break;
+        }
         record(res,{source:"ChatGPT · тариф",model:model.displayName || model.slug,cloud:true});
         await client.streamResponse({model:model.slug,input:data.messages,instructions:data.instructions,
           signal:cancel.signal,onDelta:delta=>record(res,{delta})});
@@ -142,7 +154,7 @@ const server=createServer(async (req,res)=>{
         record(res,{error:"Неизвестная операция."});
     }
   }catch(err){
-    record(res,stage==="response"?{error:explain(err)}:{available:true,status:"disconnected",sharing:false,error:explain(err)});
+    record(res,stage!=="account"?{error:explain(err)}:{available:true,status:"disconnected",sharing:false,error:explain(err)});
   }finally{res.end();}
 });
 process.umask(0o077);

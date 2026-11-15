@@ -43,7 +43,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
                 if (location.origin !== 'http://127.0.0.1:8771') return;
                 const fetchLocal = globalThis.fetch.bind(globalThis);
                 const allowed = new Set(['/api/account', '/api/account/begin', '/api/account/cancel',
-                    '/api/account/disconnect', '/api/chat']);
+                    '/api/account/disconnect', '/api/account/models', '/api/chat']);
                 globalThis.mafokenAccountFetch = (path, options = {}) => {
                     if (!allowed.has(path)) return Promise.reject(new Error('Unsupported account endpoint'));
                     const headers = new Headers(options.headers);

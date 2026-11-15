@@ -40,7 +40,7 @@ class NativeSessionTest(LoopbackTestCase):
     def test_non_native_cannot_use_oauth_or_subscription(self):
         with patch.object(server.account_bridge, "status") as status, patch.object(server.account_bridge, "send") as send:
             for path, data in [
-                ("/api/native-health", None), ("/api/account", None), ("/api/account/begin", {}),
+                ("/api/native-health", None), ("/api/account", None), ("/api/account/models", None), ("/api/account/begin", {}),
                 ("/api/account/cancel", {}), ("/api/account/disconnect", {}),
                 ("/api/chat", {"mode":"plan", "allowCloud":True}),
             ]:
@@ -58,6 +58,7 @@ class NativeSessionTest(LoopbackTestCase):
         @contextmanager
         def subscription(method, path, payload, timeout):
             self.assertEqual(payload["messages"], [{"role":"user","content":"fixture"}])
+            self.assertEqual(payload["model"], "picked-plan-model")
             yield io.BytesIO(b'{"delta":"local test fixture"}\n{"done":true}\n')
 
         with patch.object(server.account_bridge, "send", side_effect=subscription) as send:
@@ -65,7 +66,14 @@ class NativeSessionTest(LoopbackTestCase):
             self.assertIn("error",self.call("/api/chat",chat,token)[1][0])
             send.assert_not_called()
             chat["allowCloud"] = True
+            chat["planModel"] = "picked-plan-model"
             self.assertEqual(self.call("/api/chat",chat,token)[1][-1],{"done":True})
+
+    def test_native_can_list_subscription_models_without_generating(self):
+        catalog = {"models": [{"id": "fixture-model", "name": "Fixture Model"}]}
+        with patch.object(server.account_bridge, "send", return_value=io.BytesIO(json.dumps(catalog).encode())) as send:
+            self.assertEqual(self.call("/api/account/models", token=self.http.native_token.decode()), (200, [catalog]))
+            send.assert_called_once_with("GET", "/models", timeout=35)
 
     def test_browser_mode_serves_local_features_without_subscription(self):
         self.http.native_token = b""

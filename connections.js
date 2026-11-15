@@ -9,6 +9,24 @@ const connectionAccounts = new Map([
 ]);
 const connectionChecks = new Map();
 const connectionReplies = new Map();
+const nextChoices = new WeakMap();
+let pickerRevision=0;
+
+function chooseTarget(choice, mode, defaultModel, preset, profiles) {
+  const effectiveMode=choice?.mode || mode;
+  const profileId=choice?.mode==="cloud" ? choice.profileId : preset;
+  const configured=profiles[profileId];
+  const provider=choice?.mode==="cloud" && configured
+    ? {...configured,model:choice.model || configured.model} : configured;
+  return {mode:effectiveMode,profileId,provider,
+    localModel:choice?.mode==="local" ? choice.model : defaultModel,
+    planModel:choice?.mode==="plan" ? choice.model : ""};
+}
+
+function currentTarget() {
+  return chooseTarget(nextChoices.get(active),active.mode,settings.local,settings.preset,settings.providers);
+}
+
 
 function endpointHost(endpoint) {
   try { return new URL(endpoint).hostname; } catch { return ""; }
@@ -37,13 +55,129 @@ function requestRoute({mode,allow,exhausted,ready,planReady,localReady,localOnly
   return {kind:mode === "plan" ? "plan" : "api"};
 }
 
-function nextRoute(attachments = pending, data = localContext(attachments)) {
+function nextRoute(attachments = pending, data = localContext(attachments), target = currentTarget()) {
   return requestRoute({
-    mode:active.mode, allow:active.allow, exhausted:budgetExhausted(), ready:connectionReady(settings.preset),
-    planReady:!!accountFetch && chatgptAccount.sharing, localReady:installed.includes(settings.local),
+    mode:target.mode, allow:active.allow, exhausted:budgetExhausted(),
+    ready:!!(target.provider?.model && target.provider?.endpoint && apiKeys.get(target.profileId)),
+    planReady:!!accountFetch && chatgptAccount.sharing, localReady:installed.includes(target.localModel),
     localOnly:attachments.some(file=>file.localOnly), hasFiles:!!data.context || data.images.length > 0,
     hasImages:data.images.length > 0, shareContext:active.shareContext
   });
+}
+
+function localPickerOptions(model) {
+  const selected=model || (installed.includes(settings.local) ? settings.local : installed[0]) || settings.local;
+  const unavailable=!installed.includes(selected);
+  const options=installed.map(id=>new Option(id,id));
+  if (unavailable && selected) options.unshift(new Option(selected+" · не найдена",selected));
+  $("nextLocalModel").replaceChildren(...options);
+  $("nextLocalModel").value=selected;
+}
+
+function updateNextPicker(choice) {
+  const revision=++pickerRevision;
+  const source=$("nextSource").value;
+  const profile=settings.providers[source];
+  $("nextLocalField").hidden=source!=="local";
+  $("nextApiField").hidden=!(source in presets);
+  $("nextCatalogField").hidden=true;
+  $("nextCatalog").replaceChildren();
+  $("nextLoadCatalog").hidden=!(source==="plan" || source in presets);
+  $("nextLoadCatalog").disabled=source==="plan" ? !accountFetch || !chatgptAccount.sharing
+    : !profile?.endpoint || !apiKeys.get(source);
+  $("nextApiModel").value=choice?.model || profile?.model || "";
+  $("nextPickerStatus").textContent=source==="plan"
+    ? (chatgptAccount.sharing ? "Без выбора модели будет использована модель тарифа по умолчанию."
+      : "Подключите тариф в «Аккаунты и API».")
+    : source in presets && (!profile?.endpoint || !apiKeys.get(source))
+      ? "Укажите адрес и ключ в «Аккаунты и API»." : "";
+  if (source==="local") {
+    localPickerOptions(choice?.model);
+    const original=$("nextLocalModel").value;
+    void loadModels().then(()=>{
+      if (revision!==pickerRevision || !$("nextRouteDialog").open) return;
+      const current=$("nextLocalModel").value;
+      localPickerOptions(choice?.model || current!==original ? current : undefined);
+      $("nextPickerStatus").textContent=installed.length ? "" : "Ollama недоступна или нет установленных моделей.";
+    });
+  }
+  if (source==="plan" && choice?.model) {
+    $("nextCatalog").replaceChildren(new Option("По умолчанию тарифа",""),new Option(choice.model,choice.model));
+    $("nextCatalog").value=choice.model;
+    $("nextCatalogField").hidden=false;
+  }
+}
+
+function setupNextPicker() {
+  const dialog=$("nextRouteDialog");
+  $("pickNextRoute").onclick=()=>{
+    const choice=nextChoices.get(active);
+    const selected=choice?.mode==="cloud" ? choice.profileId : choice?.mode || "default";
+    const apiOptions=Object.keys(presets).map(id=>{
+      const profile=settings.providers[id];
+      return new Option("API · " + presets[id].name + (profile?.model ? " · "+profile.model : "")
+        + (apiKeys.get(id) ? "" : " · без ключа"),id);
+    });
+    $("nextSource").replaceChildren(new Option("Режим чата","default"),new Option("Этот Mac · Ollama","local"),
+      ...apiOptions,new Option("Тариф ChatGPT","plan"));
+    $("nextSource").value=selected;
+    dialog.showModal();
+    updateNextPicker(choice);
+    $("nextSource").focus();
+  };
+  $("nextSource").onchange=()=>updateNextPicker();
+  $("nextRouteClose").onclick=()=>dialog.close();
+  dialog.onclose=()=>{pickerRevision++;};
+  $("nextLoadCatalog").onclick=async ()=>{
+    const revision=++pickerRevision;
+    const source=$("nextSource").value;
+    const selected=source==="plan" ? $("nextCatalog").value : $("nextApiModel").value.trim();
+    $("nextLoadCatalog").disabled=true;
+    $("nextPickerStatus").textContent="Загружаем список моделей без генерации…";
+    try {
+      const profile=settings.providers[source];
+      let result, options;
+      if (source==="plan") {
+        const response=await accountFetch("/api/account/models");
+        result=await response.json();
+        if (!response.ok || result.error) throw new Error(result.error || "Не удалось загрузить модели тарифа.");
+        options=result.models.map(item=>new Option(item.name,item.id));
+      } else {
+        result=await localTool("cloud-models",{endpoint:profile.endpoint,key:apiKeys.get(source),kind:profile.kind});
+        if (result.state!=="verified") throw new Error(result.message);
+        options=result.models.map(id=>new Option(id,id));
+      }
+      if (revision!==pickerRevision || !dialog.open) return;
+      const actual=options.length;
+      if (selected && source==="plan" && !options.some(o=>o.value===selected))
+        options.unshift(new Option(selected+" · не найдена",selected));
+      $("nextCatalog").replaceChildren(new Option(source==="plan" ? "По умолчанию тарифа" : "Выберите модель",""),...options);
+      $("nextCatalog").value=options.some(o=>o.value===selected) ? selected : "";
+      $("nextCatalogField").hidden=!options.length;
+      $("nextPickerStatus").textContent=actual ? "Моделей в каталоге: "+actual+(result.partial ? " · показаны первые страницы" : "")
+        : "Список моделей пуст.";
+    } catch (error) {
+      if (revision===pickerRevision && dialog.open) $("nextPickerStatus").textContent=error.message;
+    } finally {
+      if (revision===pickerRevision && dialog.open) $("nextLoadCatalog").disabled=false;
+    }
+  };
+  $("nextCatalog").onchange=()=>{
+    if ($("nextSource").value!=="plan" && $("nextCatalog").value) $("nextApiModel").value=$("nextCatalog").value;
+  };
+  $("nextRouteForm").onsubmit=event=>{
+    event.preventDefault();
+    const source=$("nextSource").value;
+    if (source==="default") nextChoices.delete(active);
+    else if (source==="local") {
+      if (!$("nextLocalModel").value) { $("nextPickerStatus").textContent="Выберите локальную модель."; return; }
+      nextChoices.set(active,{mode:"local",model:$("nextLocalModel").value});
+    } else if (source==="plan") nextChoices.set(active,{mode:"plan",model:$("nextCatalog").value});
+    else nextChoices.set(active,{mode:"cloud",profileId:source,model:$("nextApiModel").value.trim()});
+    dialog.close();
+    clearNotice();
+    sync();
+  };
 }
 
 function budgetExhausted() {
@@ -61,30 +195,39 @@ function apiOwner(profile) {
 
 function renderRoute() {
   if (!active) return;
-  const profile=settings.providers[settings.preset];
-  const route=nextRoute();
+  const target=currentTarget();
+  const profile=target.provider;
+  const route=nextRoute(undefined,undefined,target);
   const account=chatgptAccount.account;
   let title, detail;
   const privacy=[active.history ? "с историей" : "без истории", active.shareContext ? "файлы и настройки разрешены" : "файлы и настройки остаются на Mac"].join(" · ");
   if (busy) {
     title="Запрос выполняется";
-    detail="Фактический источник указан у ответа.";
+    detail=nextChoices.has(active) ? "Разовый выбор сохранён для следующей отправки." : "Фактический источник указан у ответа.";
   } else if (route.kind==="blocked") {
-    title=modelsLoading && (active.mode==="auto" || active.mode==="local") ? "Проверяем Ollama…" : "Отправка недоступна";
+    title=modelsLoading && (target.mode==="auto" || target.mode==="local") ? "Проверяем Ollama…" : "Отправка недоступна";
     detail=title==="Проверяем Ollama…" ? "Проверяем список установленных моделей на Mac." : route.detail;
   } else if (route.kind==="local") {
     title="Только этот Mac · Ollama";
-    detail=[settings.local,route.detail,"Внешний API и подписка не используются."].join(" · ");
+    detail=[target.localModel,route.detail,"Внешний API и подписка не используются."].join(" · ");
   } else if (route.kind==="plan") {
     title="Тариф ChatGPT" + (account ? " · " + account : "");
-    detail=privacy;
+    detail=[target.planModel,privacy].filter(Boolean).join(" · ");
   } else {
     title=route.kind==="auto" ? "Авто · Mac или API " + apiResource(profile) : "API · " + apiResource(profile);
-    const last=connectionReplies.get(settings.preset);
-    const check=connectionChecks.get(settings.preset);
+    const last=connectionReplies.get(target.profileId);
+    const check=connectionChecks.get(target.profileId);
     detail=[apiOwner(profile),route.kind==="auto" ? "Mac выбирает маршрут" : profile.model,
-      last?.ok === false ? "последний запрос без ответа" : check?.state === "error" ? "проверка подключения не прошла" : "",privacy].filter(Boolean).join(" · ");
+      last?.model === profile?.model && last?.ok === false ? "последний запрос без ответа" : check?.state === "error" ? "проверка подключения не прошла" : "",privacy].filter(Boolean).join(" · ");
   }
+  const choice=nextChoices.get(active);
+  if (choice && !busy && route.kind==="blocked") {
+    const requested=choice.mode==="local" ? choice.model : choice.mode==="plan" ? "Тариф ChatGPT"+(target.planModel ? " · "+target.planModel : "")
+      : "API · " + (apiResource(profile) || presets[choice.profileId].name) + (profile?.model ? " · "+profile.model : "");
+    detail=requested + " — " + detail;
+  }
+  $("pickNextRoute").dataset.picked=!!choice;
+  $("pickNextRoute").textContent=choice ? "Изменить разовый выбор" : "На один запрос";
   $("routeCard").dataset.tone=busy ? "idle" : route.kind;
   if ($("routeTitle").textContent!==title) $("routeTitle").textContent=title;
   if ($("routeDetail").textContent!==detail) $("routeDetail").textContent=detail;
@@ -188,7 +331,7 @@ function renderConnections() {
       if (host) card.append(el("small",host,"connection-model"));
       card.append(el("small",apiOwner(profile),"connection-model"));
     }
-    if (reply) card.append(el("small","Генерация: " + (reply.ok ? "получен полный ответ" : "полный ответ не подтверждён") + " · " + displayTime(reply.at)));
+    if (reply) card.append(el("small","Генерация: " + (reply.ok ? "получен полный ответ" : "полный ответ не подтверждён") + (reply.model ? " · "+reply.model : "") + " · " + displayTime(reply.at)));
     else if (key) card.append(el("small","Генерация в этом сеансе не проверена."));
     if (check?.at) card.append(el("small","Проверка без генерации · " + displayTime(check.at)));
     const [amount, detail] = balanceLine(profile,check,settings.balanceSnapshots[id]);

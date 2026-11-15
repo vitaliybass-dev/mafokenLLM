@@ -86,9 +86,10 @@ function sync() {
   for (const id of ["new","temp","settings","connections","projects","prefs","chatMenu","mode","allow",
       "history","shareContext","routeAccounts","draft","send","attach","effort","canvasAttach","canvasUndo"])
     $(id).disabled = lock;
-  $("history").disabled = lock || !active.allow || active.mode === "local";
+  const effectiveMode=currentTarget().mode;
+  $("history").disabled = lock || !active.allow || effectiveMode === "local";
   $("shareContext").disabled = $("history").disabled;
-  $("allow").disabled = lock || active.mode === "local";
+  $("allow").disabled = lock || effectiveMode === "local";
   $("mic").disabled = !voice && (!voiceReady || lock || !navigator.mediaDevices || !window.MediaRecorder);
   $("stop").hidden = !busy;
   $("send").hidden = busy;
@@ -395,22 +396,23 @@ async function generate(replace, savedFiles) {
   let input = $("draft").value.trim();
   if (busy || taskBusy || draftLoading || voice) return;
   clearNotice();
-  const profileId=settings.preset, provider=settings.providers[profileId], key=apiKeys.get(profileId);
+  const target=currentTarget();
+  const {profileId,provider}=target, key=apiKeys.get(profileId);
   const attachments = savedFiles || pending;
   if (replace===undefined && !(input || attachments.length)) return;
   const material = localContext(attachments);
   const {context,entries,images,instructions} = material;
-  const route=nextRoute(attachments,material);
+  const route=nextRoute(attachments,material,target);
   if (route.kind==="blocked") {notice(route.detail); return;}
   const plan=route.kind==="plan", mayCloud=route.kind!=="local";
   const chargedAccount=plan ? chatgptAccount.account || "Подключённый аккаунт ChatGPT" : apiOwner(provider);
   if (entries.some(item=>item.truncated)) {
-    const target = active;
+    const chat = active;
     renderContextPreview(entries);
     $("contextPreview").open = true;
     if (!await confirmAction("Отправить доступную часть контекста?",
       "Часть материалов сокращена. В предпросмотре видно, какие фрагменты войдут в запрос.",
-      "Отправить доступную часть") || active !== target) return;
+      "Отправить доступную часть") || active !== chat) return;
   }
   const user=replace===undefined ? {
     role:"user",content:input || "Изучи приложенные материалы и расскажи, что в них.",
@@ -435,6 +437,7 @@ async function generate(replace, savedFiles) {
     active.messages.splice(replace,1,answer);
   }
   busy=true;
+  nextChoices.delete(active);
   controller=new AbortController();
   render();
   const view=messageNode(answer);
@@ -443,7 +446,7 @@ async function generate(replace, savedFiles) {
   try {
     const send = plan ? accountFetch : fetch;
     const response=await send("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
-      signal:controller.signal,body:JSON.stringify({mode:active.mode,model:settings.local,
+      signal:controller.signal,body:JSON.stringify({mode:target.mode,model:target.localModel,planModel:plan ? target.planModel : undefined,
         messages:fitHistory(before,user),context,images,instructions,focus:efforts[active.effort] || "",
         allowCloud:mayCloud,shareHistory:active.history,shareContext:active.shareContext,
         provider:mayCloud && !plan ? provider : undefined,key:mayCloud && !plan ? key : undefined})});
@@ -462,7 +465,7 @@ async function generate(replace, savedFiles) {
           Object.assign(answer,{source:packet.source,model:packet.model,cloud:packet.cloud,resource,
             owner:packet.cloud ? chargedAccount : ""});
           if (packet.cloud && !cloudAttempt) {
-            cloudAttempt={resource};
+            cloudAttempt={resource,model:packet.model};
             active.cloudCalls=(active.cloudCalls || 0)+1;
             save();
           }
@@ -484,7 +487,7 @@ async function generate(replace, savedFiles) {
     answer.error=err.name==="AbortError" ? "Ответ остановлен." : err.message || "Не удалось подключиться.";
   } finally {
     if (cloudAttempt) {
-      const reply={ok:complete && !answer.error && !!answer.content && answer.resource===cloudAttempt.resource,at:Date.now()};
+      const reply={ok:complete && !answer.error && !!answer.content && answer.resource===cloudAttempt.resource,model:cloudAttempt.model,at:Date.now()};
       if (plan) recordChatGPTReply(chargedAccount,reply);
       else connectionReplies.set(profileId,reply);
     }
@@ -493,6 +496,7 @@ async function generate(replace, savedFiles) {
 }
 bootWorkspace();
 setupConnections();
+setupNextPicker();
 setupChatGPT();
 if (!active) newChat(); else selectChat(active);
 loadModels();

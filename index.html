@@ -46,7 +46,10 @@
             <strong id="routeTitle">Проверяем доступные модели…</strong>
             <small id="routeDetail"></small>
           </div>
-          <button type="button" id="routeAccounts">Аккаунты и API</button>
+          <div class="route-actions">
+            <button type="button" id="pickNextRoute" aria-haspopup="dialog">На один запрос</button>
+            <button type="button" id="routeAccounts">Аккаунты и API</button>
+          </div>
         </div>
         <div class="sendrow">
           <div class="toolstrip">
@@ -77,6 +80,22 @@
     <pre id="diffPreview" aria-label="Просмотр изменений" hidden></pre>
   </section>
 </div>
+<dialog id="nextRouteDialog" aria-labelledby="nextRouteHeading">
+  <form id="nextRouteForm" autocomplete="off">
+    <h2 id="nextRouteHeading">На один запрос</h2>
+    <p>После отправки вернётся обычный режим чата. Разрешения на облако и файлы действуют как обычно.</p>
+    <label>Источник ответа <select id="nextSource" autofocus></select></label>
+    <label id="nextLocalField" hidden>Модель Ollama <select id="nextLocalModel"></select></label>
+    <label id="nextApiField" hidden>ID модели API <input id="nextApiModel" maxlength="256" placeholder="Модель из настроек"></label>
+    <button type="button" id="nextLoadCatalog" hidden>Загрузить каталог моделей</button>
+    <label id="nextCatalogField" hidden>Модель из каталога <select id="nextCatalog"></select></label>
+    <small id="nextPickerStatus" role="status"></small>
+    <div class="buttons">
+      <button type="button" id="nextRouteClose">Отмена</button>
+      <button type="submit" id="nextRouteApply" class="primary">Применить</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="connectionsDialog" aria-labelledby="connectionsTitle">
   <div class="connections-heading">
     <h2 id="connectionsTitle">Аккаунты и API</h2>

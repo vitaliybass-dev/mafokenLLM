@@ -36,6 +36,10 @@
       <form id="composer">
         <textarea id="draft" rows="3" maxlength="60000" placeholder="Задайте вопрос или вставьте код…" aria-label="Сообщение"></textarea>
         <div id="pending" aria-live="polite"></div>
+        <details id="contextPreview" hidden>
+          <summary id="contextSummary">Контекст запроса</summary>
+          <div id="contextFiles" class="context-files"></div>
+        </details>
         <div class="sendrow">
           <div class="toolstrip">
             <button type="button" id="attach" title="Прикрепить файлы или изображения" aria-label="Прикрепить файлы">＋</button>
@@ -46,7 +50,8 @@
           <button type="submit" id="send" class="primary">Отправить ↑</button>
           <button type="button" id="stop" hidden>Остановить</button>
         </div>
-        <small id="scope"></small>
+        <small id="scope" role="status"></small>
+        <small id="storageNotice" class="error" role="status" hidden></small>
         <input type="file" id="upload" multiple hidden>
       </form>
       <div class="privacy">
@@ -60,7 +65,7 @@
     <div class="canvas-toolbar"><strong>Редактор</strong><button id="canvasClose" aria-label="Закрыть редактор">×</button></div>
     <label>Имя файла <input id="canvasName" maxlength="100" placeholder="заметки.md"></label>
     <textarea id="canvasText" spellcheck="false" maxlength="150000" aria-label="Текст редактора" placeholder="Откройте сюда ответ ассистента или создайте свой текст."></textarea>
-    <div class="toolstrip"><button id="canvasAttach">Добавить в запрос</button><button id="canvasPreview">Показать diff</button><button id="canvasDownload">Скачать</button></div>
+    <div class="toolstrip"><button id="canvasAttach">Добавить в запрос</button><button id="canvasPreview">Показать diff</button><button id="canvasDownload">Скачать</button><button id="canvasUndo" hidden>Вернуть предыдущий текст</button></div>
     <pre id="diffPreview" aria-label="Просмотр изменений" hidden></pre>
   </section>
 </div>
@@ -128,22 +133,32 @@
     <div class="buttons"><button type="button" id="close">Закрыть</button><button type="submit" class="primary">Готово</button></div>
   </form>
 </dialog>
-<dialog id="chatDialog">
+<dialog id="actionDialog" aria-labelledby="actionTitle" aria-describedby="actionDetail">
+  <section>
+    <h2 id="actionTitle"></h2>
+    <p id="actionDetail"></p>
+    <div class="buttons">
+      <button id="actionCancel" type="button" autofocus>Отмена</button>
+      <button id="actionAccept" type="button" class="primary"></button>
+    </div>
+  </section>
+</dialog>
+<dialog id="chatDialog" aria-labelledby="chatDialogTitle">
   <form id="chatForm" autocomplete="off">
-    <h2>Управление чатом</h2>
+    <h2 id="chatDialogTitle">Управление чатом</h2>
     <label>Название <input id="chatName" maxlength="100" required></label>
     <label>Проект <select id="chatProject"></select></label>
     <label>Лимит облачных вызовов в этом чате <input type="number" id="cloudBudget" min="0" max="1000" required><small>0 — без лимита. Учитываются попытки отправки. Это лимит запросов, а не денег.</small></label>
     <label class="inline"><input type="checkbox" id="pinned"> Закрепить в списке</label>
     <label class="inline"><input type="checkbox" id="archived"> В архив</label>
-    <div class="buttons wrap"><button type="button" id="chatExport">Скачать Markdown</button><button type="button" id="chatDelete" class="danger">Удалить</button><button class="primary">Сохранить</button></div>
+    <div class="buttons wrap"><button type="button" id="chatExport">Скачать Markdown</button><button type="button" id="chatDelete" class="danger">Удалить</button><button id="chatClose" type="button">Закрыть</button><button class="primary">Сохранить</button></div>
   </form>
 </dialog>
-<dialog id="projectDialog">
+<dialog id="projectDialog" aria-labelledby="projectDialogTitle">
   <form id="projectForm">
-    <h2>Проекты</h2>
+    <h2 id="projectDialogTitle">Проекты</h2>
     <label>Выбрать проект <select id="projectEdit"></select></label>
-    <label>Название <input id="projectName" maxlength="80" required></label>
+    <label>Название <input id="projectName" maxlength="80" required autofocus></label>
     <label>Инструкции для чатов проекта <textarea id="projectInstructions" rows="4" maxlength="5000"></textarea></label>
     <div id="projectFiles"></div>
     <div class="toolstrip"><button id="projectAttach" type="button">Добавить материалы</button><button id="projectFolder" type="button">Выбрать папку кода</button></div>

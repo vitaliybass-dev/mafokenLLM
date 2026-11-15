@@ -3,6 +3,108 @@
 let projects = [], pending = [], projectDraft, taskBusy = false;
 let voice = null, voiceTimer, voiceReady = false;
 const maxInbox = 8 * 1024 * 1024;
+const contextLimit = 48000;
+const composerFiles = new Map();
+let draftDatabase;
+let draftLoading = false;
+let draftRevision = 0;
+
+function storageWarning(text) {
+  $("storageNotice").hidden = false;
+  $("storageNotice").textContent = text;
+}
+
+function draftStore() {
+  if (!draftDatabase) {
+    draftDatabase = new Promise((resolve, reject) => {
+      const request = indexedDB.open("mafokenLLM-composer", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("files");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+  return draftDatabase;
+}
+
+async function readComposerFiles(id) {
+  const db = await draftStore();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction("files").objectStore("files").get(id);
+    request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function storeComposerFiles(id, files) {
+  try {
+    const db = await draftStore();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction("files", "readwrite");
+      const store = transaction.objectStore("files");
+      if (files.length) store.put(files, id); else store.delete(id);
+      transaction.oncomplete = resolve;
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } catch {
+    storageWarning("Не удалось сохранить вложения на диск. Они доступны до закрытия приложения.");
+  }
+}
+
+function saveDraftText() {
+  if (active?.temp || !active) return;
+  try {
+    const text = $("draft").value;
+    const key = "localchat.draft." + active.id;
+    if (text) localStorage.setItem(key, text); else localStorage.removeItem(key);
+  } catch { storageWarning("Черновик не сохранён. Скопируйте текст перед закрытием приложения."); }
+}
+
+async function restoreComposer(chat, preset = null) {
+  const revision = ++draftRevision;
+  draftLoading = false;
+  pending = preset?.files || composerFiles.get(chat.id) || [];
+  try {
+    $("draft").value = preset?.text ?? (chat.temp ? "" : localStorage.getItem("localchat.draft." + chat.id) || "");
+  } catch { $("draft").value = preset?.text ?? ""; }
+  if (preset) {
+    saveDraftText();
+    showPending(true);
+    return;
+  }
+  showPending();
+  if (chat.temp || composerFiles.has(chat.id)) return;
+
+  draftLoading = true;
+  try {
+    const files = await readComposerFiles(chat.id);
+    if (revision !== draftRevision) return;
+    pending = files;
+    composerFiles.set(chat.id, files);
+  } catch {
+    if (revision === draftRevision) storageWarning("Сохранённые вложения не удалось прочитать.");
+  } finally {
+    if (revision === draftRevision) {
+      draftLoading = false;
+      showPending();
+      sync();
+      $("draft").focus();
+    }
+  }
+}
+
+function confirmAction(title, detail, accept) {
+  const dialog = $("actionDialog");
+  if (dialog.open) return Promise.resolve(false);
+  $("actionTitle").textContent = title;
+  $("actionDetail").textContent = detail;
+  $("actionAccept").textContent = accept;
+  dialog.returnValue = "";
+  return new Promise(resolve => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "accept"), {once:true});
+    dialog.showModal();
+    $("actionCancel").focus();
+  });
+}
 
 function downloadText(name, text) {
   const url = URL.createObjectURL(new Blob([text], {type:"text/plain;charset=utf-8"}));
@@ -12,16 +114,30 @@ function downloadText(name, text) {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url),1000);
 }
-function canvasOpen(text, filename) {
-  if (text !== undefined) active.canvas = {text:text.slice(0,150000),name:filename || "ответ.md"};
+async function canvasOpen(text, filename) {
+  const currentChat = active;
+  if (text !== undefined) {
+    const incoming = {text:text.slice(0,150000),name:filename || "ответ.md"};
+    const current = active.canvas;
+    if (current?.text && (current.text !== incoming.text || current.name !== incoming.name)) {
+      const accepted = await confirmAction(
+        "Открыть ответ в редакторе?", "Текущий текст останется доступен через «Вернуть предыдущий текст».",
+        "Открыть ответ");
+      if (!accepted || active !== currentChat) return false;
+      active.canvasPrevious = current;
+    }
+    active.canvas = incoming;
+    save();
+  }
   $("canvasPane").hidden = false;
   refreshCanvas();
-  save();
+  return true;
 }
 function refreshCanvas() {
   $("canvasName").value = active.canvas?.name || "";
   $("canvasText").value = active.canvas?.text || "";
   $("diffPreview").hidden = true;
+  $("canvasUndo").hidden = !active.canvasPrevious;
 }
 function projectChoices(select, first, selected) {
   select.replaceChildren(new Option(first,""),...projects.map(p => new Option(p.name,p.id)));
@@ -52,8 +168,15 @@ function renderChips(node, list, remove) {
     return chip;
   }));
 }
-function showPending() {
-  renderChips($("pending"),pending,i=>{if (!busy) {pending.splice(i,1); showPending();}});
+function showPending(changed = false) {
+  renderChips($("pending"),pending,i=>{
+    if (!busy && !taskBusy) { pending.splice(i,1); showPending(true); }
+  });
+  if (changed && !active.temp) {
+    composerFiles.set(active.id, pending);
+    void storeComposerFiles(active.id, [...pending]);
+  }
+  renderContextPreview();
 }
 function setProjectDraft(id) {
   const p = projects.find(p=>p.id===id);
@@ -121,7 +244,7 @@ async function addFiles(files, target, report) {
   }
   taskBusy = false;
   for (const id of ["projectEdit","projectAttach","projectFolder"]) $(id).disabled = false;
-  if (target===pending) showPending(); else showProjectFiles();
+  if (target===pending) showPending(true); else showProjectFiles();
   sync();
   report(errors.length ? errors.slice(0,3).join(" · ") : "Файлы добавлены.");
 }
@@ -155,26 +278,55 @@ function folderPicker(files) {
     : "В папке не найдено подходящих исходников.";
 }
 function attachLocalScreenCapture(data) {
-  if (busy || taskBusy || voice || pending.length >= 12 ||
+  if (busy || taskBusy || draftLoading || voice || pending.length >= 12 ||
       pending.filter(file => file.mime).length >= 2 ||
       typeof data !== "string" || data.length > 2796204) return false;
   pending.push({name:"Снимок окна.jpg",mime:"image/jpeg",data,localOnly:true});
   active.mode = "local";
   save();
-  showPending();
+  showPending(true);
   sync();
   notice("Снимок приложен. Запрос выполнит модель на Mac.");
   return true;
 }
 
 function localContext(attachments = pending) {
-  const p = projectOf(active);
+  const project = projectOf(active);
   const instructions = [settings.instructions,
     !active.temp && settings.memoryOn && settings.memory ? "Память:\n"+settings.memory : "",
-    p?.instructions ? "Инструкции проекта:\n"+p.instructions : ""].filter(Boolean).join("\n\n");
-  return {context:[...attachments,...(p?.files || [])].filter(it=>it.text).map(it=>
-      "Файл: " + it.name + "\n" + it.text).join("\n\n").slice(0,48000),
-    images:attachments.filter(it=>it.mime),instructions};
+    project?.instructions ? "Инструкции проекта:\n"+project.instructions : ""].filter(Boolean).join("\n\n");
+  const sources = [...attachments.map(file => ({file,origin:"Вложение"})),
+    ...(project?.files || []).map(file => ({file,origin:"Проект"}))];
+  let context = "";
+  const entries = sources.map(({file,origin}) => {
+    if (file.mime) return {name:file.name,origin,image:true,truncated:false};
+    const text = file.text || "";
+    const header = (context ? "\n\n" : "") + "Файл: " + file.name + "\n";
+    const available = Math.max(0,contextLimit - context.length - header.length);
+    // Do not leave half of a UTF-16 surrogate pair at the limit.
+    const fragment = text.slice(0, available).replace(/[\uD800-\uDBFF]$/u,"");
+    if (fragment) context += header + fragment;
+    return {name:file.name,origin,fragment,length:text.length,
+      truncated:!!file.truncated || fragment.length < text.length};
+  });
+  return {context,entries,images:attachments.filter(file=>file.mime),instructions};
+}
+
+function renderContextPreview(entries = localContext().entries) {
+  $("contextPreview").hidden = !entries.length;
+  const truncated = entries.filter(item=>item.truncated).length;
+  $("contextSummary").textContent = "Контекст запроса · " + entries.length +
+    (truncated ? " · сокращено: " + truncated : "");
+  $("contextFiles").replaceChildren(...entries.map(item=>{
+    const caption = item.origin + " · " + item.name + " — " + (item.image ? "изображение"
+      : !item.fragment ? "не войдёт в запрос"
+      : item.fragment.length.toLocaleString("ru") + " знаков" + (item.truncated ? ", только начало" : ""));
+    if (!item.fragment) return el("div",caption,"context-entry");
+    const details = el("details",undefined,"context-entry");
+    details.append(el("summary",caption),el("pre",item.fragment));
+    return details;
+  }));
+  return truncated;
 }
 async function startVoice() {
   if (voice) {voice.stop(); return;}
@@ -200,6 +352,7 @@ async function startVoice() {
         const info = await localTool("transcribe",{data:await asBase64(new Blob(chunks))});
         if (!info.text) throw new Error("Речь не распознана.");
         $("draft").value = [$("draft").value,info.text].filter(Boolean).join(" ").slice(0,60000);
+        saveDraftText();
       } catch (err) { failure = err.message || "Не удалось распознать запись."; }
       taskBusy = false;
       sync();
@@ -237,11 +390,22 @@ function bootWorkspace() {
   $("showArchive").onchange = renderSidebar;
   $("chatMenu").onclick = chatDialog;
   $("chatExport").onclick = () => downloadText(active.title+".md",historyMarkdown(active));
-  $("chatDelete").onclick = () => {
-    if (!confirm("Удалить этот чат и его редактор?")) return;
-    chats = chats.filter(c=>c!==active);
+  $("actionCancel").onclick = () => $("actionDialog").close();
+  $("actionAccept").onclick = () => $("actionDialog").close("accept");
+  $("chatClose").onclick = () => $("chatDialog").close();
+  $("chatDelete").onclick = async () => {
+    const target = active;
+    if (!await confirmAction("Удалить чат?", "Будут удалены переписка, черновик и текст редактора.", "Удалить чат")
+        || active !== target) return;
+    chats = chats.filter(chat=>chat!==target);
+    if (!target.temp) {
+      try { localStorage.removeItem("localchat.draft." + target.id); } catch {}
+      composerFiles.delete(target.id);
+      void storeComposerFiles(target.id, []);
+    }
     $("chatDialog").close();
-    if (chats.length) selectChat(chats.find(c=>!c.archived) || chats[0]); else newChat();
+    if (chats.length) selectChat(chats.find(chat=>!chat.archived) || chats[0]); else newChat();
+    notice("Чат удалён.");
   };
   $("chatForm").onsubmit = e => {
     e.preventDefault();
@@ -257,6 +421,7 @@ function bootWorkspace() {
     projectChoices($("projectEdit"),"＋ Новый проект",id);
     setProjectDraft($("projectEdit").value);
     $("projectDialog").showModal();
+    $("projectName").focus();
   };
   $("projectEdit").onchange = () => {
     if (!taskBusy) setProjectDraft($("projectEdit").value);
@@ -299,6 +464,13 @@ function bootWorkspace() {
   };
   $("canvas").onclick = () => canvasOpen();
   $("canvasClose").onclick = () => { $("canvasPane").hidden=true; };
+  $("canvasUndo").onclick = () => {
+    if (!active.canvasPrevious) return;
+    [active.canvas, active.canvasPrevious] = [active.canvasPrevious, active.canvas];
+    refreshCanvas();
+    save();
+  };
+  $("draft").oninput = saveDraftText;
   for (const id of ["canvasName","canvasText"]) $(id).oninput=()=>{
     active.canvas={name:$("canvasName").value,text:$("canvasText").value};
     $("diffPreview").hidden=true;
@@ -308,7 +480,7 @@ function bootWorkspace() {
     const text=$("canvasText").value.trim();
     if (!text || pending.length>=12 || busy) return;
     pending.push({name:$("canvasName").value.trim() || "редактор.md",text:text.slice(0,24000),truncated:text.length>24000});
-    showPending(); $("draft").focus();
+    showPending(true); $("draft").focus();
     if (window.innerWidth<940) $("canvasPane").hidden=true;
   };
   $("canvasPreview").onclick = () => {

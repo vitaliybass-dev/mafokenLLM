@@ -1,4 +1,5 @@
 """mafokenLLM HTTP service. No installation beyond Python 3.9+."""
+import hmac
 import json
 import os
 import sys
@@ -182,6 +183,18 @@ class Handler(BaseHTTPRequestHandler):
     def same_host(self):
         return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
 
+    def native_authorized(self):
+        token = getattr(self.server, "native_token", b"")
+        supplied = self.headers.get("X-LocalChat-Native", "").encode("latin-1")
+        return bool(token) and hmac.compare_digest(supplied, token)
+
+    def require_native(self):
+        if self.native_authorized():
+            return True
+        self.headers_for("application/json", 403)
+        self.emit(error="Для входа и работы по тарифу ChatGPT откройте приложение mafokenLLM для macOS.")
+        return False
+
     def headers_for(self, mime, status=200):
         self.send_response(status)
         self.send_header("Content-Type", mime)
@@ -208,13 +221,14 @@ class Handler(BaseHTTPRequestHandler):
             filename, mime = assets[self.path]
             self.headers_for(mime + "; charset=utf-8")
             self.wfile.write((ROOT / filename).read_bytes())
-        elif self.path == "/api/native-health" and os.environ.get("LOCALCHAT_NATIVE_NONCE"):
-            if self.headers.get("X-LocalChat-Native") != os.environ["LOCALCHAT_NATIVE_NONCE"]:
-                self.send_error(403)
+        elif self.path == "/api/native-health":
+            if not self.require_native():
                 return
             self.headers_for("application/json")
             self.emit(native=True)
         elif self.path == "/api/account":
+            if not self.require_native():
+                return
             self.headers_for("application/json")
             self.emit(**account_bridge.status("GET", "/status"))
         elif self.path == "/api/capabilities":
@@ -254,11 +268,15 @@ class Handler(BaseHTTPRequestHandler):
             self.emit(error="Запрос слишком большой или имеет неверный формат.")
             return
         if self.path in account_actions:
+            if not self.require_native():
+                return
             self.headers_for("application/json")
             self.emit(**account_bridge.status("POST", account_actions[self.path]))
             return
         if self.path != "/api/chat":
             self.run_tool(data)
+            return
+        if data.get("mode") == "plan" and not self.require_native():
             return
         try:
             messages = normalized(data)
@@ -393,10 +411,13 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     addr = ("127.0.0.1", int(os.environ.get("LOCALCHAT_PORT", "8769")))
     with ThreadingHTTPServer(addr, Handler) as httpd:
-        print(f"mafokenLLM: http://127.0.0.1:{httpd.server_port}", flush=True)
-        if os.environ.get("LOCALCHAT_NATIVE_NONCE"):
+        if os.environ.get("LOCALCHAT_NATIVE") == "1":
+            httpd.native_token = sys.stdin.buffer.readline(128).rstrip(b"\r\n")
+            if len(httpd.native_token) < 64:
+                raise SystemExit("Missing native session token.")
             def stop_when_parent_exits():
                 sys.stdin.buffer.read(1)
                 httpd.shutdown()
             Thread(target=stop_when_parent_exits, daemon=True).start()
+        print(f"mafokenLLM: http://127.0.0.1:{httpd.server_port}", flush=True)
         httpd.serve_forever()

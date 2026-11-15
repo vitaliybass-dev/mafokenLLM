@@ -123,3 +123,11 @@ a { color:var(--accent) }
 .connection-actions a { padding:4px 0; margin-right:5px }
 #connectionsDialog h3 { font-size:14px; margin:14px 0 7px }
 .web-chats { gap:10px; padding:6px 2px }
+
+#storageNotice { display: block; margin: 4px 0; }
+#contextPreview { margin: 3px 0 6px; max-height: min(26vh, 230px); overflow: auto; }
+#contextPreview summary { cursor: pointer; }
+#contextSummary { color: var(--mute); font-size: 12px; padding: 3px 2px; }
+.context-files { padding: 3px 6px; display: grid; gap: 4px; }
+.context-entry { font-size: 12px; overflow-wrap: anywhere; }
+.context-entry pre { padding: 6px; margin: 3px 0; max-height: 140px; overflow: auto; white-space: pre-wrap; }

@@ -38,6 +38,22 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         buildMenu()
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        let accountClient = """
+            (() => {
+                if (location.origin !== 'http://127.0.0.1:8771') return;
+                const fetchLocal = globalThis.fetch.bind(globalThis);
+                const allowed = new Set(['/api/account', '/api/account/begin', '/api/account/cancel',
+                    '/api/account/disconnect', '/api/chat']);
+                globalThis.mafokenAccountFetch = (path, options = {}) => {
+                    if (!allowed.has(path)) return Promise.reject(new Error('Unsupported account endpoint'));
+                    const headers = new Headers(options.headers);
+                    headers.set('X-LocalChat-Native', '\(nonce)');
+                    return fetchLocal(path, {...options, headers, redirect: 'error'});
+                };
+            })();
+            """
+        configuration.userContentController.addUserScript(
+            WKUserScript(source: accountClient, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web = WKWebView(frame: .zero, configuration: configuration)
         web.navigationDelegate = self
         web.uiDelegate = self
@@ -112,7 +128,8 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         backend.currentDirectoryURL = runtime
         var environment = ProcessInfo.processInfo.environment
         environment["LOCALCHAT_PORT"] = "8771"
-        environment["LOCALCHAT_NATIVE_NONCE"] = nonce
+        environment["LOCALCHAT_NATIVE"] = "1"
+        environment.removeValue(forKey: "LOCALCHAT_NATIVE_NONCE")
         backend.environment = environment
         backend.standardInput = stdinPipe
         backend.standardOutput = FileHandle.nullDevice
@@ -128,7 +145,9 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         do {
             try backend.run()
             launched = true
+            try stdinPipe.fileHandleForWriting.write(contentsOf: Data((nonce + "\n").utf8))
         } catch {
+            if launched && backend.isRunning { backend.terminate() }
             showStartup("Не удалось запустить сервер mafokenLLM. Проверьте, доступен ли системный Python 3.")
             return
         }

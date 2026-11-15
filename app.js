@@ -36,8 +36,8 @@ function save() {
     localStorage.setItem("localchat.config", JSON.stringify(settings));
     localStorage.setItem("localchat.chats", JSON.stringify(chats));
     localStorage.setItem("localchat.projects", JSON.stringify(projects));
-    localStorage.setItem("localchat.active", JSON.stringify(active.temp ? null : active.id));
-  } catch { $("status").textContent = "В браузере нет места для сохранения переписки."; }
+    if (!active.temp) localStorage.setItem("localchat.active", JSON.stringify(active.id));
+  } catch { storageWarning("Изменения не сохранены на диск. Скопируйте важный текст перед закрытием."); }
 }
 function newChat(temp = false) {
   const chat = {id:crypto.randomUUID(),title:temp ? "Временный чат" : "Новый чат",
@@ -45,29 +45,24 @@ function newChat(temp = false) {
   if (!temp) chats.unshift(chat);
   selectChat(chat);
 }
-function selectChat(chat) {
+function selectChat(chat, composer = null) {
   active = chat;
-  pending = [];
-  showPending();
-  $("draft").value = "";
+  void restoreComposer(chat, composer);
   refreshCanvas();
   save();
   render();
   $("draft").focus();
 }
 function forkChat(index, edit = false) {
-  if (busy || taskBusy || voice) return;
+  if (busy || taskBusy || draftLoading || voice) return;
   const original = active;
   const branch = {...original,id:crypto.randomUUID(),title:"Ветка: "+original.title,
     messages:structuredClone(original.messages.slice(0,index + (edit ? 0 : 1))),
-    pinned:false,archived:false,cloudCalls:0,canvas:undefined};
+    pinned:false,archived:false,cloudCalls:0,canvas:undefined,canvasPrevious:undefined};
   if (!branch.temp) chats.unshift(branch);
-  selectChat(branch);
-  if (edit) {
-    $("draft").value = original.messages[index].content;
-    pending = [...(transientUploads.get(original.messages[index]) || [])];
-    showPending();
-  }
+  const composer = edit ? {text:original.messages[index].content,
+    files:[...(transientUploads.get(original.messages[index]) || [])]} : null;
+  selectChat(branch, composer);
 }
 function status() {
   connectionButton();
@@ -85,7 +80,7 @@ function status() {
   if (active.mode === "local" || (active.mode === "auto" && !active.allow)) {
     scope = "Запросы остаются на этом Mac";
   } else if (active.mode === "plan") {
-    scope = !chatgptAccount.sharing ? "Подключите тариф через «Аккаунты и API»"
+    scope = !accountFetch ? desktopAccountOnly : !chatgptAccount.sharing ? "Подключите тариф через «Аккаунты и API»"
       : !active.allow ? "Разрешите облако, чтобы использовать тариф ChatGPT"
       : "Тариф ChatGPT · " + (active.history ? "с историей чата" : "только последнее сообщение");
   } else if (!active.allow) {
@@ -102,7 +97,7 @@ function status() {
   $("scope").textContent = scope;
 }
 function sync() {
-  const lock = busy || taskBusy || !!voice;
+  const lock = busy || taskBusy || draftLoading || !!voice;
   $("title").textContent = active.title;
   $("allow").checked = active.allow;
   $("history").checked = active.history;
@@ -110,7 +105,7 @@ function sync() {
   $("mode").value = active.mode;
   $("effort").value = active.effort || "normal";
   for (const id of ["new","temp","settings","connections","projects","prefs","chatMenu","mode","allow",
-      "history","shareContext","draft","send","attach","effort","canvasAttach"])
+      "history","shareContext","draft","send","attach","effort","canvasAttach","canvasUndo"])
     $(id).disabled = lock;
   $("history").disabled = lock || !active.allow || active.mode === "local";
   $("shareContext").disabled = $("history").disabled;
@@ -194,10 +189,10 @@ function messageNode(message) {
       if (message.content) {
         action("Копировать",b=>copyText(b,message.content));
         action("Озвучить",()=>speak(message.content));
-        action("В редактор",()=>{
+        action("В редактор",async ()=>{
           const patch = message.content.match(/\x60{3}diff\s*\n([\s\S]*?)\x60{3}/);
-          canvasOpen(patch ? patch[1] : message.content,patch ? "изменения.patch" : "ответ.md");
-          if (patch) $("canvasPreview").click();
+          const opened = await canvasOpen(patch ? patch[1] : message.content,patch ? "изменения.patch" : "ответ.md");
+          if (opened && patch) $("canvasPreview").click();
         });
         action("Ветка",()=>forkChat(index));
       }
@@ -246,6 +241,7 @@ function render() {
     $("messages").replaceChildren(card);
   }
   sync();
+  renderContextPreview();
   bottom();
 }
 async function loadModels() {
@@ -349,7 +345,7 @@ function fitHistory(before,user) {
 }
 async function generate(replace, savedFiles) {
   let input = $("draft").value.trim();
-  if (busy || taskBusy || voice) return;
+  if (busy || taskBusy || draftLoading || voice) return;
   const provider=settings.providers[settings.preset], key=apiKeys.get(settings.preset);
   const exhausted=active.cloudBudget && (active.cloudCalls || 0)>=active.cloudBudget;
   const plan=active.mode==="plan";
@@ -358,19 +354,27 @@ async function generate(replace, savedFiles) {
     notice("Разрешите API и укажите адрес, модель и ключ в настройках."); return;
   }
   if (plan && !(active.allow && chatgptAccount.sharing)) {
-    notice("Разрешите облако в чате и подключите тариф через «Подключения API»."); return;
+    notice(accountFetch ? "Разрешите облако в чате и подключите тариф через «Аккаунты и API»." : desktopAccountOnly); return;
   }
   const attachments = savedFiles || pending;
   if (active.mode !== "local" && attachments.some(file => file.localOnly)) {
     notice("Для снимка окна выберите «Только Mac»."); return;
   }
   if (replace===undefined && !(input || attachments.length)) return;
-  const {context,images,instructions} = localContext(attachments);
+  const {context,entries,images,instructions} = localContext(attachments);
   if (plan && images.length) {
     notice("Режим тарифа ChatGPT принимает текст. Для изображений выберите Ollama или API."); return;
   }
   if ((active.mode==="cloud" || plan) && !active.shareContext && (context || images.length)) {
     notice("Для файлов выберите «Авто» / «Только Mac» или разрешите отправку контекста.");return;
+  }
+  if (entries.some(item=>item.truncated)) {
+    const target = active;
+    renderContextPreview(entries);
+    $("contextPreview").open = true;
+    if (!await confirmAction("Отправить доступную часть контекста?",
+      "Часть материалов сокращена. В предпросмотре видно, какие фрагменты войдут в запрос.",
+      "Отправить доступную часть") || active !== target) return;
   }
   const user=replace===undefined ? {
     role:"user",content:input || "Изучи приложенные материалы и расскажи, что в них.",
@@ -383,7 +387,9 @@ async function generate(replace, savedFiles) {
     if (attachments.length) transientUploads.set(user,[...attachments]);
     active.messages.push(user,answer);
     $("draft").value="";
-    pending=[];showPending();
+    saveDraftText();
+    pending=[];
+    showPending(true);
   } else {
     // Keep the previous answer available as a separate conversation.
     if (!active.temp && active.messages[replace].content) {
@@ -399,7 +405,8 @@ async function generate(replace, savedFiles) {
   $("messages").lastChild.replaceWith(view.node);
   const mayCloud=active.allow && active.mode!=="local" && !exhausted;
   try {
-    const response=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+    const send = plan ? accountFetch : fetch;
+    const response=await send("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
       signal:controller.signal,body:JSON.stringify({mode:active.mode,model:settings.local,
         messages:fitHistory(before,user),context,images,instructions,focus:efforts[active.effort] || "",
         allowCloud:mayCloud,shareHistory:active.history,shareContext:active.shareContext,
@@ -436,6 +443,6 @@ async function generate(replace, savedFiles) {
 bootWorkspace();
 setupConnections();
 setupChatGPT();
-if (!active) newChat(); else render();
+if (!active) newChat(); else selectChat(active);
 loadModels();
 if (active.mode === "plan") refreshChatGPT();

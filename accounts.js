@@ -1,6 +1,9 @@
 "use strict";
 
-let chatgptAccount={available:true,status:"disconnected",sharing:false};
+const accountFetch = globalThis.mafokenAccountFetch;
+const desktopAccountOnly = "Вход и тариф ChatGPT доступны в приложении mafokenLLM для macOS.";
+let chatgptAccount = {available:!!accountFetch,status:"disconnected",sharing:false,
+  error:accountFetch ? "" : desktopAccountOnly};
 let accountPoll, accountRevision=0;
 
 function renderChatGPT() {
@@ -28,9 +31,10 @@ function applyChatGPT(state) {
 }
 
 async function refreshChatGPT() {
+  if (!accountFetch) { renderChatGPT(); return; }
   const revision=++accountRevision;
   try {
-    const response=await fetch("/api/account");
+    const response=await accountFetch("/api/account");
     if (!response.ok) throw new Error();
     const state=await response.json();
     if (revision===accountRevision) applyChatGPT(state);
@@ -41,12 +45,17 @@ async function refreshChatGPT() {
 }
 
 async function accountAction(action) {
+  if (!accountFetch) return;
   clearTimeout(accountPoll);
   const revision=++accountRevision;
   if (action==="begin") applyChatGPT({...chatgptAccount,status:"connecting",sharing:false,error:""});
   clearTimeout(accountPoll);
   try {
-    const state=await localTool("account/"+action,{});
+    const response=await accountFetch("/api/account/"+action,{
+      method:"POST",headers:{"Content-Type":"application/json"},body:"{}"
+    });
+    if (!response.ok) throw new Error();
+    const state=await response.json();
     if (revision===accountRevision) applyChatGPT(state);
   } catch {
     if (revision===accountRevision) applyChatGPT({...chatgptAccount,status:"disconnected",sharing:false,
@@ -55,6 +64,7 @@ async function accountAction(action) {
 }
 
 function setupChatGPT() {
+  renderChatGPT();
   $("chatgptSignIn").onclick=()=>accountAction("begin");
   $("chatgptCancel").onclick=()=>accountAction("cancel");
   $("chatgptDisconnect").onclick=()=>accountAction("disconnect");

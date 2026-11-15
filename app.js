@@ -1,0 +1,441 @@
+"use strict";
+const $ = id => document.getElementById(id);
+const presets = {
+  openai: {name:"OpenAI",kind:"openai",endpoint:"https://api.openai.com/v1/chat/completions",limitField:"max_completion_tokens",usage:true},
+  deepseek: {name:"DeepSeek",kind:"openai",endpoint:"https://api.deepseek.com/chat/completions",limitField:"max_tokens",usage:true},
+  anthropic: {name:"Claude",kind:"anthropic",endpoint:"https://api.anthropic.com/v1/messages"},
+  gemini: {name:"Gemini",kind:"openai",endpoint:"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",limitField:"max_tokens"},
+  custom: {name:"Свой API",kind:"openai",endpoint:"",limitField:"max_tokens"}
+};
+const fresh = preset => ({...presets[preset],model:"",maxTokens:4096});
+function read(name, fallback) {
+  try { return JSON.parse(localStorage.getItem(name)) ?? fallback; }
+  catch { return fallback; }
+}
+const saved = read("localchat.config", {});
+let settings = {preset:"openai",local:"gemma4:12b-backup",providers:{},balanceSnapshots:{},...saved};
+let chats = read("localchat.chats", []);
+let active = chats.find(c => c.id === read("localchat.active", null));
+let installed = [], busy = false, editing = "", apiKeys = new Map(), controller = null;
+const transientUploads = new WeakMap();
+const efforts = {
+  brief:"Отвечай кратко, сразу по делу. Дай только необходимые детали.",
+  deep:"Разбери задачу подробно: ключевые допущения, варианты, ограничения и способ проверки результата.",
+  patch:"Предложи правку как unified diff в блоке Markdown diff, пути относительные к корню проекта. " +
+    "Используй точный контекст из предоставленных исходников, минимальный набор изменений. " +
+    "Если нужного файла или контекста нет, спроси его вместо выдумывания."
+};
+const el = (tag, text, css) => {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (css) element.className = css;
+  return element;
+};
+function save() {
+  try {
+    localStorage.setItem("localchat.config", JSON.stringify(settings));
+    localStorage.setItem("localchat.chats", JSON.stringify(chats));
+    localStorage.setItem("localchat.projects", JSON.stringify(projects));
+    localStorage.setItem("localchat.active", JSON.stringify(active.temp ? null : active.id));
+  } catch { $("status").textContent = "В браузере нет места для сохранения переписки."; }
+}
+function newChat(temp = false) {
+  const chat = {id:crypto.randomUUID(),title:temp ? "Временный чат" : "Новый чат",
+    temp,mode:"auto",allow:false,history:false,messages:[],project:temp ? "" : $("projectFilter").value};
+  if (!temp) chats.unshift(chat);
+  selectChat(chat);
+}
+function selectChat(chat) {
+  active = chat;
+  pending = [];
+  showPending();
+  $("draft").value = "";
+  refreshCanvas();
+  save();
+  render();
+  $("draft").focus();
+}
+function forkChat(index, edit = false) {
+  if (busy || taskBusy || voice) return;
+  const original = active;
+  const branch = {...original,id:crypto.randomUUID(),title:"Ветка: "+original.title,
+    messages:structuredClone(original.messages.slice(0,index + (edit ? 0 : 1))),
+    pinned:false,archived:false,cloudCalls:0,canvas:undefined};
+  if (!branch.temp) chats.unshift(branch);
+  selectChat(branch);
+  if (edit) {
+    $("draft").value = original.messages[index].content;
+    pending = [...(transientUploads.get(original.messages[index]) || [])];
+    showPending();
+  }
+}
+function status() {
+  connectionButton();
+  const cloud = settings.providers[settings.preset], key = apiKeys.get(settings.preset);
+  const ready = cloud?.model && cloud?.endpoint && key;
+  const p = projectOf(active), cloudCalls = active.cloudCalls || 0;
+  const usage = active.messages.filter(m=>m.cloud && m.usage).map(m=>m.usage);
+  const total = usage.reduce((n,u)=>n+(u.input || 0)+(u.output || 0),0);
+  $("status").textContent = [
+    active.temp ? "Не сохраняется" : p?.name,
+    installed.length ? settings.local : "Ollama недоступна или нет локальной модели",
+    cloudCalls ? "Облако: "+cloudCalls+(active.cloudBudget ? "/"+active.cloudBudget : "")+(usage.length ? " · "+total.toLocaleString("ru")+" ток. учтено" : "") : ""
+  ].filter(Boolean).join(" · ");
+  let scope;
+  if (active.mode === "local" || (active.mode === "auto" && !active.allow)) {
+    scope = "Запросы остаются на этом Mac";
+  } else if (active.mode === "plan") {
+    scope = !chatgptAccount.sharing ? "Подключите тариф через «Аккаунты и API»"
+      : !active.allow ? "Разрешите облако, чтобы использовать тариф ChatGPT"
+      : "Тариф ChatGPT · " + (active.history ? "с историей чата" : "только последнее сообщение");
+  } else if (!active.allow) {
+    scope = "Разрешите облако, чтобы отправлять запросы через API";
+  } else if (!ready) {
+    scope = active.mode === "auto" ? "Запросы идут на Mac. Добавьте ключ в «Аккаунты и API» для облака."
+      : "Подключите API в настройках";
+  } else {
+    scope = cloud.name + " · " + (active.history ? "с историей чата" : "только последнее сообщение") +
+      " · " + (active.shareContext ? "файлы и настройки разрешены" : "файлы и настройки остаются на Mac") +
+      " · до " + cloud.maxTokens.toLocaleString("ru") + " токенов ответа";
+  }
+  if (active.cloudBudget && cloudCalls >= active.cloudBudget) scope += " · лимит облачных вызовов исчерпан";
+  $("scope").textContent = scope;
+}
+function sync() {
+  const lock = busy || taskBusy || !!voice;
+  $("title").textContent = active.title;
+  $("allow").checked = active.allow;
+  $("history").checked = active.history;
+  $("shareContext").checked = !!active.shareContext;
+  $("mode").value = active.mode;
+  $("effort").value = active.effort || "normal";
+  for (const id of ["new","temp","settings","connections","projects","prefs","chatMenu","mode","allow",
+      "history","shareContext","draft","send","attach","effort","canvasAttach"])
+    $(id).disabled = lock;
+  $("history").disabled = lock || !active.allow || active.mode === "local";
+  $("shareContext").disabled = $("history").disabled;
+  $("allow").disabled = lock || active.mode === "local";
+  $("mic").disabled = !voice && (!voiceReady || lock || !navigator.mediaDevices || !window.MediaRecorder);
+  $("stop").hidden = !busy;
+  $("send").hidden = busy;
+  for (const button of $("chats").children) button.disabled = lock;
+  status();
+}
+function inlineMarkdown(target, text) {
+  const marker = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|\*\*([^*]+)\*\*|\x60([^\x60]+)\x60/g;
+  let at = 0;
+  for (const m of text.matchAll(marker)) {
+    target.append(document.createTextNode(text.slice(at,m.index)));
+    if (m[2]) {
+      const link=el("a",m[1]);
+      link.href=m[2]; link.target="_blank"; link.rel="noopener noreferrer";
+      target.append(link);
+    } else target.append(el(m[3] ? "strong" : "code",m[3] || m[4]));
+    at=m.index+m[0].length;
+  }
+  target.append(document.createTextNode(text.slice(at)));
+}
+function markdown(target,text) {
+  const lines = text.split("\n"), out = document.createDocumentFragment();
+  const cells = line => line.trim().replace(/^\||\|$/g,"").split("|").map(s=>s.trim());
+  let i=0;
+  while (i<lines.length) {
+    const line=lines[i++];
+    const fence=line.match(/^\s*\x60{3}([\w+-]*)/);
+    const title=line.match(/^(#{1,6})\s+(.*)$/);
+    const item=line.match(/^\s*(?:([-+*])|(\d+)\.)\s+(.*)$/);
+    if (fence) {
+      const code=[];
+      while(i<lines.length&&!/^\s*\x60{3}/.test(lines[i])) code.push(lines[i++]);
+      if (i<lines.length) i++;
+      const group=el("div",undefined,"codebox"), bar=el("div",fence[1] || "код","meta");
+      const copy=el("button","Копировать");
+      copy.onclick=()=>copyText(copy,code.join("\n"));
+      bar.append(copy); group.append(bar,el("pre",code.join("\n"))); out.append(group);
+    } else if (title) {
+      const heading=el("h"+Math.min(4,title[1].length+1));
+      inlineMarkdown(heading,title[2]); out.append(heading);
+    } else if (item) {
+      const list=el(item[2] ? "ol" : "ul");
+      if (item[2]) list.start=Number(item[2]);
+      let row=item;
+      while (row && !!row[2] === !!item[2]) {
+        const li=el("li"); inlineMarkdown(li,row[3]); list.append(li);
+        row=lines[i]?.match(/^\s*(?:([-+*])|(\d+)\.)\s+(.*)$/);
+        if (row && !!row[2] === !!item[2]) i++;
+      }
+      out.append(list);
+    } else if (line.includes("|") && lines[i] && /^\s*\|?\s*:?-{3,}/.test(lines[i]) && lines[i].includes("|")) {
+      const table=el("table"), header=el("thead"), body=el("tbody");
+      const tr=row=>{const r=el("tr"); for(const cell of cells(row[0])) {
+        const x=el(row[1]); inlineMarkdown(x,cell); r.append(x); } return r;};
+      header.append(tr([line,"th"])); i++;
+      while(i<lines.length&&lines[i].includes("|")) body.append(tr([lines[i++],"td"]));
+      table.append(header,body);out.append(table);
+    } else {
+      const p=el("p"); inlineMarkdown(p,line || "\u00a0"); out.append(p);
+    }
+  }
+  target.replaceChildren(out);
+}
+async function copyText(button,text) {
+  try { await navigator.clipboard.writeText(text); button.textContent="Скопировано"; }
+  catch { button.textContent="Не удалось скопировать"; }
+}
+function messageNode(message) {
+  const node=el("article",undefined,"message "+(message.role==="user" ? "user" : ""));
+  const meta=el("div",undefined,"meta"), label=el("span"), usage=el("span");
+  meta.append(label,usage);
+  const content=el("div",undefined,"content"), error=el("div",undefined,"error");
+  if (!busy) {
+    const index=active.messages.indexOf(message);
+    const action=(name,fn)=>{const b=el("button",name); b.onclick=()=>{if(!busy&&!taskBusy&&!voice) fn(b);}; meta.append(b);};
+    if (message.role==="assistant") {
+      if (message.content) {
+        action("Копировать",b=>copyText(b,message.content));
+        action("Озвучить",()=>speak(message.content));
+        action("В редактор",()=>{
+          const patch = message.content.match(/\x60{3}diff\s*\n([\s\S]*?)\x60{3}/);
+          canvasOpen(patch ? patch[1] : message.content,patch ? "изменения.patch" : "ответ.md");
+          if (patch) $("canvasPreview").click();
+        });
+        action("Ветка",()=>forkChat(index));
+      }
+      if (index===active.messages.length-1 && active.messages[index-1]?.role==="user")
+        action("Повторить",()=>retry(index));
+    } else {
+      action("Изменить в ветке",()=>forkChat(index,true));
+    }
+  }
+  node.append(meta,content,error);
+  function update(parsed = false) {
+    label.textContent=message.role==="user" ? "Вы"+(message.files?.length ? " · "+message.files.join(", ") : "") :
+      (message.model ? message.source+" · "+message.model : message.status || "Ожидаем ответ…");
+    usage.textContent=message.usage ? "· токены: вход "+(message.usage.input ?? "—")+", выход "+(message.usage.output ?? "—") : "";
+    error.textContent=message.error || "";
+    if (parsed && message.role==="assistant" && message.content) markdown(content,message.content);
+    else content.textContent=message.content;
+  }
+  update(!busy);
+  return {node,update};
+}
+function bottom() { $("messages").scrollTop = $("messages").scrollHeight; }
+function renderSidebar() {
+  projectChoices($("projectFilter"),"Все чаты",$("projectFilter").value);
+  const query = $("chatSearch").value.trim().toLowerCase(), group = $("projectFilter").value;
+  const selected = chats.filter(c=>($("showArchive").checked ? c.archived : !c.archived)
+    && (!group || c.project===group) && (!query || c.title.toLowerCase().includes(query)
+    || c.messages.some(m=>m.content.toLowerCase().includes(query))));
+  selected.sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned));
+  $("chats").replaceChildren(...selected.map(chat=>{
+    const button=el("button",(chat.pinned?"★ ":"")+chat.title);
+    button.disabled=busy || taskBusy || !!voice;
+    if (chat===active) button.setAttribute("aria-current","true");
+    button.onclick=()=>selectChat(chat);
+    return button;
+  }));
+}
+function render() {
+  renderSidebar();
+  if (active.messages.length) $("messages").replaceChildren(...active.messages.map(m => messageNode(m).node));
+  else {
+    const card = el("div",undefined,"empty");
+    card.append(el("h1",active.temp ? "Временный чат" : "Что сегодня соберём?"),
+      el("p",active.temp ? "Чат исчезнет при закрытии или смене диалога. Память не используется." :
+        "Вставьте код, прикрепите файл или выберите исходники проекта. Модель на Mac работает по умолчанию."));
+    $("messages").replaceChildren(card);
+  }
+  sync();
+  bottom();
+}
+async function loadModels() {
+  try {
+    const response = await fetch("/api/models"), info = await response.json();
+    installed = info.models || [];
+    if (installed.length && !installed.includes(settings.local)) {
+      settings.local = installed.includes(info.default) ? info.default : installed[0];
+      save();
+    }
+  } catch { installed = []; }
+  status();
+}
+function collect() {
+  return {
+    name:presets[editing].name,kind:$("kind").value,endpoint:$("endpoint").value.trim(),
+    model:$("cloudModel").value.trim(),maxTokens:Number($("maxTokens").value),
+    limitField:$("limitField").value,usage:$("usage").checked
+  };
+}
+function showProvider(preset) {
+  editing = preset;
+  const p = settings.providers[preset] || fresh(preset);
+  for (const [id,v] of Object.entries({kind:p.kind,endpoint:p.endpoint,cloudModel:p.model,
+    maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:apiKeys.get(preset) || ""})) $(id).value = v;
+  $("usage").checked = p.usage === true;
+  formatFields();
+}
+function formatFields() {
+  for (const id of ["limitField","usage"]) $(id).closest("label").hidden = $("kind").value === "anthropic";
+}
+$("kind").onchange = formatFields;
+async function openModelSettings(preset = settings.preset) {
+  await loadModels();
+  if (busy || $("dialog").open) return;
+  $("localModel").replaceChildren(...(installed.length ? installed : [settings.local]).map(m => new Option(m,m)));
+  $("localModel").value = settings.local;
+  $("preset").value = preset;
+  showProvider(preset);
+  $("dialog").showModal();
+}
+$("settings").onclick = () => openModelSettings();
+$("preset").onchange = () => showProvider($("preset").value);
+$("close").onclick = () => $("dialog").close();
+$("dialog").onclose = () => { $("key").value = ""; };
+$("config").onsubmit = event => {
+  event.preventDefault();
+  const provider = collect();
+  if (provider.endpoint && !provider.endpoint.startsWith("https://")) {
+    $("endpoint").setCustomValidity("Адрес должен начинаться с https://");
+    $("endpoint").reportValidity();
+    return;
+  }
+  const oldProfile = settings.providers[editing], oldKey = apiKeys.get(editing);
+  apiKeys.set(editing,$("key").value.trim());
+  settings.providers[editing] = provider;
+  settings.preset = editing;
+  settings.local = $("localModel").value;
+  connectionChanged(editing,oldProfile,oldKey);
+  save();
+  sync();
+  $("dialog").close();
+};
+$("endpoint").oninput = () => $("endpoint").setCustomValidity("");
+$("mode").onchange = () => {
+  active.mode = $("mode").value;
+  save(); sync();
+  if (active.mode === "plan") refreshChatGPT();
+};
+$("allow").onchange = () => { active.allow = $("allow").checked; save(); sync(); };
+$("history").onchange = () => { active.history = $("history").checked; save(); sync(); };
+$("new").onclick = () => newChat();
+$("temp").onclick = () => newChat(true);
+$("shareContext").onchange = () => { active.shareContext=$("shareContext").checked; save(); sync(); };
+$("effort").onchange = () => { active.effort=$("effort").value; save(); };
+$("stop").onclick = () => controller?.abort();
+$("draft").onkeydown = e => {
+  if (!e.isComposing && e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("composer").requestSubmit();
+};
+$("composer").onsubmit = e => { e.preventDefault(); generate(); };
+async function retry(index) {
+  const original = active.messages[index-1];
+  const attachments = transientUploads.get(original);
+  if (original.files?.length && !attachments) {
+    notice("Чтобы повторить с файлами, откройте сообщение в ветке и прикрепите файлы снова.");
+    return;
+  }
+  await generate(index,attachments || []);
+}
+function fitHistory(before,user) {
+  let remaining=185000-user.content.length;
+  const trimmed=[];
+  for (let i=before.length-1;i>=0&&trimmed.length<98;i--) {
+    const m=before[i];
+    if (!m.content || m.error) continue;
+    if (m.content.length>remaining) break;
+    trimmed.unshift({role:m.role,content:m.content});
+    remaining-=m.content.length;
+  }
+  return [...trimmed,{role:"user",content:user.content}];
+}
+async function generate(replace, savedFiles) {
+  let input = $("draft").value.trim();
+  if (busy || taskBusy || voice) return;
+  const provider=settings.providers[settings.preset], key=apiKeys.get(settings.preset);
+  const exhausted=active.cloudBudget && (active.cloudCalls || 0)>=active.cloudBudget;
+  const plan=active.mode==="plan";
+  if ((active.mode==="cloud" || plan) && exhausted) {notice("Лимит облачных вызовов исчерпан. Выберите «Только Mac» или измените лимит чата.");return;}
+  if (active.mode==="cloud" && !(active.allow && provider?.model && provider?.endpoint && key)) {
+    notice("Разрешите API и укажите адрес, модель и ключ в настройках."); return;
+  }
+  if (plan && !(active.allow && chatgptAccount.sharing)) {
+    notice("Разрешите облако в чате и подключите тариф через «Подключения API»."); return;
+  }
+  const attachments = savedFiles || pending;
+  if (active.mode !== "local" && attachments.some(file => file.localOnly)) {
+    notice("Для снимка окна выберите «Только Mac»."); return;
+  }
+  if (replace===undefined && !(input || attachments.length)) return;
+  const {context,images,instructions} = localContext(attachments);
+  if (plan && images.length) {
+    notice("Режим тарифа ChatGPT принимает текст. Для изображений выберите Ollama или API."); return;
+  }
+  if ((active.mode==="cloud" || plan) && !active.shareContext && (context || images.length)) {
+    notice("Для файлов выберите «Авто» / «Только Mac» или разрешите отправку контекста.");return;
+  }
+  const user=replace===undefined ? {
+    role:"user",content:input || "Изучи приложенные материалы и расскажи, что в них.",
+    files:attachments.map(f=>f.name)
+  } : active.messages[replace-1];
+  const before=replace===undefined ? active.messages.slice() : active.messages.slice(0,replace-1);
+  const answer={role:"assistant",content:""};
+  if (replace===undefined) {
+    if (!active.messages.length && !active.temp && active.title==="Новый чат") active.title=(input || user.files[0]).slice(0,48);
+    if (attachments.length) transientUploads.set(user,[...attachments]);
+    active.messages.push(user,answer);
+    $("draft").value="";
+    pending=[];showPending();
+  } else {
+    // Keep the previous answer available as a separate conversation.
+    if (!active.temp && active.messages[replace].content) {
+      chats.unshift({...active,id:crypto.randomUUID(),title:"До повтора: "+active.title,
+        messages:structuredClone(active.messages),pinned:false,archived:false});
+    }
+    active.messages.splice(replace,1,answer);
+  }
+  busy=true;
+  controller=new AbortController();
+  render();
+  const view=messageNode(answer);
+  $("messages").lastChild.replaceWith(view.node);
+  const mayCloud=active.allow && active.mode!=="local" && !exhausted;
+  try {
+    const response=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      signal:controller.signal,body:JSON.stringify({mode:active.mode,model:settings.local,
+        messages:fitHistory(before,user),context,images,instructions,focus:efforts[active.effort] || "",
+        allowCloud:mayCloud,shareHistory:active.history,shareContext:active.shareContext,
+        provider:mayCloud && !plan ? provider : undefined,key:mayCloud && !plan ? key : undefined})});
+    if (!response.ok) throw new Error((await response.json()).error || "Запрос отклонён.");
+    const reader=response.body.getReader(), decoder=new TextDecoder();
+    let buffer="", complete=false;
+    while (true) {
+      const {done,value}=await reader.read(); if (done) break;
+      buffer+=decoder.decode(value,{stream:true});
+      let delimiter;
+      while ((delimiter=buffer.indexOf("\n"))>=0) {
+        const packet=JSON.parse(buffer.slice(0,delimiter)); buffer=buffer.slice(delimiter+1);
+        if (packet.delta) answer.content+=packet.delta;
+        if (packet.source) {
+          Object.assign(answer,{source:packet.source,model:packet.model,cloud:packet.cloud});
+          if (packet.cloud) {active.cloudCalls=(active.cloudCalls || 0)+1; save();}
+        }
+        if (packet.status) answer.status=packet.status;
+        if (packet.usage) answer.usage=packet.usage;
+        if (packet.error) answer.error=packet.error;
+        if (packet.done) complete=true;
+      }
+      view.update();
+      bottom();
+    }
+    if (!complete && !answer.error) throw new Error("Поток ответа прервался.");
+  } catch (err) {
+    answer.error=err.name==="AbortError" ? "Ответ остановлен." : err.message || "Не удалось подключиться.";
+  } finally {
+    busy=false; controller=null; save(); render(); $("draft").focus();
+  }
+}
+bootWorkspace();
+setupConnections();
+setupChatGPT();
+if (!active) newChat(); else render();
+loadModels();
+if (active.mode === "plan") refreshChatGPT();

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalChat — рабочий чат</title>
+<link rel="stylesheet" href="/style.css">
+<script defer src="/workspace.js"></script>
+<script defer src="/connections.js"></script>
+<script defer src="/accounts.js"></script>
+<script defer src="/app.js"></script>
+<body>
+<div class="workspace">
+  <aside>
+    <div class="brand"><span>⌘</span> LocalChat</div>
+    <div class="duo"><button id="new" class="new">＋ Новый чат</button><button id="temp" title="Временный чат" aria-label="Временный чат">◷</button></div>
+    <input id="chatSearch" type="search" placeholder="Поиск по чатам" aria-label="Поиск по чатам">
+    <div class="duo"><select id="projectFilter" aria-label="Фильтр проектов"></select><button id="projects" title="Управление проектами" aria-label="Управление проектами">✎</button></div>
+    <div class="eyebrow">ДИАЛОГИ</div><nav id="chats" aria-label="Диалоги"></nav>
+    <label class="archive"><input id="showArchive" type="checkbox"> Архив</label>
+    <button id="prefs">Память и профиль</button>
+    <button id="connections">Аккаунты и API</button>
+    <button id="settings">⚙ Модели и сервисы</button>
+  </aside>
+  <main>
+    <header>
+      <div><strong id="title">Новый чат</strong><small id="status" role="status">Подключаемся к Ollama…</small></div>
+      <label class="visually-hidden" for="mode">Режим ответа</label>
+      <div class="headtools">
+      <button id="canvas" title="Открыть редактор">Редактор</button>
+      <select id="mode"><option value="auto">Авто</option><option value="local">Только Mac</option><option value="cloud">Только API</option><option value="plan">Тариф ChatGPT</option></select>
+      <button id="chatMenu" title="Управление чатом" aria-label="Управление чатом">⋯</button>
+      </div>
+    </header>
+    <section id="messages" aria-label="Переписка"></section>
+    <footer>
+      <form id="composer">
+        <textarea id="draft" rows="3" maxlength="60000" placeholder="Задайте вопрос или вставьте код…" aria-label="Сообщение"></textarea>
+        <div id="pending" aria-live="polite"></div>
+        <div class="sendrow">
+          <div class="toolstrip">
+            <button type="button" id="attach" title="Прикрепить файлы или изображения" aria-label="Прикрепить файлы">＋</button>
+            <button type="button" id="mic" title="Локальная диктовка" aria-label="Локальная диктовка">🎙</button>
+            <label class="visually-hidden" for="effort">Формат ответа</label>
+            <select id="effort"><option value="normal">Обычный ответ</option><option value="brief">Краткий</option><option value="deep">Разбор</option><option value="patch">Предложить diff</option></select>
+          </div>
+          <button type="submit" id="send" class="primary">Отправить ↑</button>
+          <button type="button" id="stop" hidden>Остановить</button>
+        </div>
+        <small id="scope"></small>
+        <input type="file" id="upload" multiple hidden>
+      </form>
+      <div class="privacy">
+        <label><input type="checkbox" id="allow"> Разрешить облако в этом чате</label>
+        <label><input type="checkbox" id="history"> Передавать историю</label>
+        <label><input type="checkbox" id="shareContext"> Передавать файлы и настройки</label>
+      </div>
+    </footer>
+  </main>
+  <section id="canvasPane" aria-label="Редактор" hidden>
+    <div class="canvas-toolbar"><strong>Редактор</strong><button id="canvasClose" aria-label="Закрыть редактор">×</button></div>
+    <label>Имя файла <input id="canvasName" maxlength="100" placeholder="заметки.md"></label>
+    <textarea id="canvasText" spellcheck="false" maxlength="150000" aria-label="Текст редактора" placeholder="Откройте сюда ответ ассистента или создайте свой текст."></textarea>
+    <div class="toolstrip"><button id="canvasAttach">Добавить в запрос</button><button id="canvasPreview">Показать diff</button><button id="canvasDownload">Скачать</button></div>
+    <pre id="diffPreview" aria-label="Просмотр изменений" hidden></pre>
+  </section>
+</div>
+<dialog id="connectionsDialog" aria-labelledby="connectionsTitle">
+  <div class="connections-heading">
+    <h2 id="connectionsTitle">Аккаунты и API</h2>
+    <button id="connectionsClose" type="button" aria-label="Закрыть">×</button>
+  </div>
+  <section class="account-section" aria-labelledby="cloudAccountsTitle">
+    <h3 id="cloudAccountsTitle">Аккаунты</h3>
+    <div class="connection-card">
+      <div class="connection-row"><strong>ChatGPT</strong><small id="chatgptState" role="status"></small></div>
+      <small id="chatgptNote">Для запросов по вашему тарифу ChatGPT.</small>
+      <div class="connection-actions">
+        <button id="chatgptSignIn" type="button">Войти через ChatGPT</button>
+        <button id="chatgptCancel" type="button" hidden>Отменить</button>
+        <button id="chatgptDisconnect" type="button" hidden>Отключить</button>
+        <a href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">Открыть ChatGPT</a>
+      </div>
+    </div>
+    <div class="connection-actions web-chats" aria-label="Официальные веб-чаты">
+      <a href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Открыть Claude</a>
+      <a href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Открыть Gemini</a>
+      <a href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">Открыть DeepSeek</a>
+    </div>
+  </section>
+  <h3>API и балансы</h3>
+  <div id="connectionList" aria-live="polite"></div>
+  <div class="buttons">
+    <button id="refreshConnections" type="button">Проверить подключения</button>
+  </div>
+</dialog>
+<dialog id="balanceDialog" aria-labelledby="balanceTitle">
+  <form id="balanceForm" autocomplete="off">
+    <h2 id="balanceTitle">Записать баланс</h2>
+    <label>Остаток из кабинета <input id="balanceAmount" inputmode="decimal" maxlength="24" required></label>
+    <label>Валюта <input id="balanceCurrency" maxlength="3" pattern="[A-Za-z]{3}" placeholder="USD" required></label>
+    <div class="buttons wrap">
+      <button id="balanceDelete" type="button">Убрать запись</button>
+      <button id="balanceClose" type="button">Отмена</button>
+      <button type="submit" class="primary">Сохранить</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="dialog">
+  <form id="config" autocomplete="off">
+    <h2>Модели и сервисы</h2>
+    <label>Локальная модель <select id="localModel"></select></label>
+    <label>Облачный провайдер
+      <select id="preset">
+        <option value="openai">OpenAI</option><option value="deepseek">DeepSeek</option>
+        <option value="anthropic">Anthropic / Claude</option><option value="gemini">Google Gemini</option>
+        <option value="custom">Свой API</option>
+      </select>
+    </label>
+    <label>Формат API <select id="kind"><option value="openai">Chat Completions</option><option value="anthropic">Anthropic Messages</option></select></label>
+    <label>Полный адрес API <input type="url" id="endpoint" placeholder="https://…/v1/chat/completions"></label>
+    <label>Идентификатор модели <input id="cloudModel" placeholder="Как в кабинете провайдера"></label>
+    <label>Ключ API <input type="password" id="key" autocomplete="off" placeholder="Действует до закрытия или перезагрузки вкладки"></label>
+    <label>Лимит токенов на ответ <input type="number" id="maxTokens" min="128" max="32768" step="1" required></label>
+    <label>Параметр лимита для Chat Completions
+      <select id="limitField"><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens</option></select>
+    </label>
+    <label class="inline"><input type="checkbox" id="usage"> Запрашивать счётчик токенов в потоке Chat Completions</label>
+    <div class="buttons"><button type="button" id="close">Закрыть</button><button type="submit" class="primary">Готово</button></div>
+  </form>
+</dialog>
+<dialog id="chatDialog">
+  <form id="chatForm" autocomplete="off">
+    <h2>Управление чатом</h2>
+    <label>Название <input id="chatName" maxlength="100" required></label>
+    <label>Проект <select id="chatProject"></select></label>
+    <label>Лимит облачных вызовов в этом чате <input type="number" id="cloudBudget" min="0" max="1000" required><small>0 — без лимита. Учитываются попытки отправки. Это лимит запросов, а не денег.</small></label>
+    <label class="inline"><input type="checkbox" id="pinned"> Закрепить в списке</label>
+    <label class="inline"><input type="checkbox" id="archived"> В архив</label>
+    <div class="buttons wrap"><button type="button" id="chatExport">Скачать Markdown</button><button type="button" id="chatDelete" class="danger">Удалить</button><button class="primary">Сохранить</button></div>
+  </form>
+</dialog>
+<dialog id="projectDialog">
+  <form id="projectForm">
+    <h2>Проекты</h2>
+    <label>Выбрать проект <select id="projectEdit"></select></label>
+    <label>Название <input id="projectName" maxlength="80" required></label>
+    <label>Инструкции для чатов проекта <textarea id="projectInstructions" rows="4" maxlength="5000"></textarea></label>
+    <div id="projectFiles"></div>
+    <div class="toolstrip"><button id="projectAttach" type="button">Добавить материалы</button><button id="projectFolder" type="button">Выбрать папку кода</button></div>
+    <input id="folderUpload" type="file" webkitdirectory multiple hidden>
+    <div id="folderList" aria-label="Файлы выбранной папки"></div>
+    <input id="projectUpload" type="file" multiple hidden>
+    <small id="projectStatus" role="status"></small>
+    <div class="buttons"><button id="projectClose" type="button">Закрыть</button><button class="primary">Сохранить</button></div>
+  </form>
+</dialog>
+<dialog id="prefsDialog">
+  <form id="prefsForm">
+    <h2>Память и профиль</h2>
+    <label class="inline"><input id="memoryOn" type="checkbox"> Использовать сохранённые заметки</label>
+    <label>Что ассистенту помнить <textarea id="memory" rows="5" maxlength="5000"></textarea></label>
+    <label>Как отвечать по умолчанию <textarea id="instructions" rows="3" maxlength="1700"></textarea></label>
+    <small>Хранятся в этом браузере. Для временного чата память отключена.</small>
+    <div class="buttons"><button type="button" id="prefsClose">Закрыть</button><button class="primary">Сохранить</button></div>
+  </form>
+</dialog>
+</body>
+</html>

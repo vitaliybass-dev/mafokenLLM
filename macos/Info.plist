@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>LocalChat</string>
+  <key>CFBundleDisplayName</key><string>LocalChat</string>
+  <key>CFBundleExecutable</key><string>LocalChat</string>
+  <key>CFBundleIdentifier</key><string>app.localchat.mac</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleIconFile</key><string>LocalChat</string>
+  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>LocalChat записывает голос для распознавания речи на этом Mac.</string>
+  <key>NSScreenCaptureUsageDescription</key><string>LocalChat делает снимок выбранного окна, когда вы нажимаете «Снимок окна».</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+</dict>
+</plist>

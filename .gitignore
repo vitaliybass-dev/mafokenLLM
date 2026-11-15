@@ -1,0 +1,20 @@
+# Local sign-in SDK and compiled helper
+/.siwc/
+/node_modules/
+
+# Local settings, credentials, and generated data
+.env
+.env.*
+*.pem
+*.key
+*.log
+*.sqlite*
+__pycache__/
+*.py[cod]
+
+# macOS metadata and build products
+.DS_Store
+*.app/
+*.icns
+/build/
+/dist/

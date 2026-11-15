@@ -58,7 +58,7 @@ aside input[type=search] { width:100% }
 .archive { font-size:12px; color:var(--mute) }
 aside { gap:9px }
 #messages, header, footer, #canvasPane { min-width:0 }
-#scope { display:block; padding:7px 4px 1px }
+#scope { display:block; color:#ffd6a3; padding:7px 4px 1px }
 .toolstrip { flex-wrap:wrap }
 .toolstrip :is(button,select) { font-size:12px; padding:6px 8px }
 #pending, #projectFiles { display:flex; gap:5px; flex-wrap:wrap; padding:3px }
@@ -131,3 +131,19 @@ a { color:var(--accent) }
 .context-files { padding: 3px 6px; display: grid; gap: 4px; }
 .context-entry { font-size: 12px; overflow-wrap: anywhere; }
 .context-entry pre { padding: 6px; margin: 3px 0; max-height: 140px; overflow: auto; white-space: pre-wrap; }
+
+.route-card { --route-color:#bac9ce; display:flex; align-items:center; justify-content:space-between; gap:8px 14px; flex-wrap:wrap; margin:5px 0 8px; padding:8px 10px; border:1px solid var(--line); border-inline-start:3px solid var(--route-color); border-radius:9px; background:#202729 }
+.route-card[data-tone=local], .resource-pill.local { --route-color:#a9f0d1 }
+.route-card[data-tone=auto], .route-card[data-tone=api], .resource-pill.api { --route-color:#abcfff }
+.route-card[data-tone=plan], .resource-pill.plan { --route-color:#dbc5ff }
+.route-card[data-tone=blocked], .resource-pill.warning { --route-color:#ffd6a3 }
+.route-copy { display:grid; min-width:0; flex:1 1 230px; gap:2px; overflow-wrap:anywhere }
+.route-copy strong { color:var(--route-color); font-size:13px }
+.route-kicker { color:var(--mute); font-size:9px; font-weight:710; letter-spacing:.12em }
+#routeAccounts { padding:5px 8px; font-size:11px; white-space:nowrap }
+.resource-line { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px 8px; margin-top:4px }
+.resource-pill { --route-color:#bac9ce; display:inline-block; border:1px solid var(--line); border-radius:6px; padding:0 5px; color:var(--route-color); font-size:11px; font-weight:650 }
+.local-connection { margin-top:10px }
+.connection-caption,.web-section { font-size:12px; margin:4px 0 8px; color:var(--mute) }
+.web-section { padding:6px 0 0 }
+.web-section summary { cursor:pointer; margin-bottom:4px }

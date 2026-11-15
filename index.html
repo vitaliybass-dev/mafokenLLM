@@ -40,6 +40,14 @@
           <summary id="contextSummary">Контекст запроса</summary>
           <div id="contextFiles" class="context-files"></div>
         </details>
+        <div id="routeCard" class="route-card" data-tone="idle">
+          <div class="route-copy" role="status">
+            <span class="route-kicker">СЛЕДУЮЩИЙ ЗАПРОС</span>
+            <strong id="routeTitle">Проверяем доступные модели…</strong>
+            <small id="routeDetail"></small>
+          </div>
+          <button type="button" id="routeAccounts">Аккаунты и API</button>
+        </div>
         <div class="sendrow">
           <div class="toolstrip">
             <button type="button" id="attach" title="Прикрепить файлы или изображения" aria-label="Прикрепить файлы">＋</button>
@@ -50,7 +58,7 @@
           <button type="submit" id="send" class="primary">Отправить ↑</button>
           <button type="button" id="stop" hidden>Остановить</button>
         </div>
-        <small id="scope" role="status"></small>
+        <small id="scope" role="status" hidden></small>
         <small id="storageNotice" class="error" role="status" hidden></small>
         <input type="file" id="upload" multiple hidden>
       </form>
@@ -74,11 +82,18 @@
     <h2 id="connectionsTitle">Аккаунты и API</h2>
     <button id="connectionsClose" type="button" aria-label="Закрыть">×</button>
   </div>
+  <div class="connection-card local-connection">
+    <div class="connection-row"><strong>Этот Mac · Ollama</strong><span id="localConnectionState" class="connection-status"></span></div>
+    <small id="localConnectionDetail"></small>
+    <small>Вычисления на Mac; внешний API и подписка не используются.</small>
+  </div>
   <section class="account-section" aria-labelledby="cloudAccountsTitle">
-    <h3 id="cloudAccountsTitle">Аккаунты</h3>
+    <h3 id="cloudAccountsTitle">Подписка внутри приложения</h3>
     <div class="connection-card">
-      <div class="connection-row"><strong>ChatGPT</strong><small id="chatgptState" role="status"></small></div>
-      <small id="chatgptNote">Для запросов по вашему тарифу ChatGPT.</small>
+      <div class="connection-row"><strong>ChatGPT</strong><span id="chatgptState" class="connection-status" role="status"></span></div>
+      <small id="chatgptIdentity" hidden></small>
+      <small id="chatgptNote"></small>
+      <small id="chatgptLast" hidden></small>
       <div class="connection-actions">
         <button id="chatgptSignIn" type="button">Войти через ChatGPT</button>
         <button id="chatgptCancel" type="button" hidden>Отменить</button>
@@ -86,13 +101,18 @@
         <a href="https://chatgpt.com/" target="_blank" rel="noopener noreferrer">Открыть ChatGPT</a>
       </div>
     </div>
+    <details class="web-section">
+    <summary>Веб-аккаунты · открываются только в браузере</summary>
+    <small>mafokenLLM не проверяет эти сеансы и не использует их в чате.</small>
     <div class="connection-actions web-chats" aria-label="Официальные веб-чаты">
       <a href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">Открыть Claude</a>
       <a href="https://gemini.google.com/app" target="_blank" rel="noopener noreferrer">Открыть Gemini</a>
       <a href="https://chat.deepseek.com/" target="_blank" rel="noopener noreferrer">Открыть DeepSeek</a>
     </div>
+    </details>
   </section>
-  <h3>API и балансы</h3>
+  <h3>API по ключу · доступ и баланс</h3>
+  <p class="connection-caption">Используется аккаунт или проект, которому принадлежит ключ. Проверка не запускает генерацию.</p>
   <div id="connectionList" aria-live="polite"></div>
   <div class="buttons">
     <button id="refreshConnections" type="button">Проверить подключения</button>
@@ -125,6 +145,7 @@
     <label>Полный адрес API <input type="url" id="endpoint" placeholder="https://…/v1/chat/completions"></label>
     <label>Идентификатор модели <input id="cloudModel" placeholder="Как в кабинете провайдера"></label>
     <label>Ключ API <input type="password" id="key" autocomplete="off" placeholder="Действует до закрытия или перезагрузки вкладки"></label>
+    <label>Метка API аккаунта или проекта <input id="billingLabel" maxlength="64" placeholder="Например, личный проект или команда"></label>
     <button type="button" id="fetchCatalog">Загрузить модели провайдера</button>
     <p id="catalogStatus" role="status"></p>
     <label id="catalogField" hidden>Модели из каталога <select id="cloudCatalog"></select></label>

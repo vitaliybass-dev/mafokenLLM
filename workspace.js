@@ -157,7 +157,11 @@ function chatDialog() {
   for (const id of ["pinned","archived","chatProject"]) $(id).disabled = !!active.temp;
   $("chatDialog").showModal();
 }
-function notice(text) { $("scope").textContent = text; }
+function notice(text) {
+  $("scope").textContent = text;
+  $("scope").hidden = !text;
+}
+function clearNotice() { notice(""); }
 function renderChips(node, list, remove) {
   node.replaceChildren(...list.map((item,i) => {
     const chip = el("span",undefined,"chip"), button = el("button","×");
@@ -177,6 +181,7 @@ function showPending(changed = false) {
     void storeComposerFiles(active.id, [...pending]);
   }
   renderContextPreview();
+  renderRoute();
 }
 function setProjectDraft(id) {
   const p = projects.find(p=>p.id===id);

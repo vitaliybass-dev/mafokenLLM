@@ -64,14 +64,14 @@ class CatalogAndFallbackTest(LoopbackTestCase):
             self.assertEqual(body["model"], "local-fixture")
             self.assertEqual(body["messages"][1]["content"], "previous local")
             self.assertEqual(headers, {})
-            return io.BytesIO(b'{"message":{"content":"local"},"done":true}\n')
+            return io.BytesIO(b'{"message":{"content":"local"},"done":true,"prompt_eval_count":42,"eval_count":1}\n')
 
         with patch.object(server, "route", return_value=True), patch.object(server, "models", return_value=["local-fixture"]):
             with patch.object(server, "request", side_effect=request) as upstream:
                 _, packets = self.call("/api/chat", self.chat("auto"))
                 self.assertEqual([p["model"] for p in packets if "source" in p], ["cloud-fixture", "local-fixture"])
                 self.assertTrue(any("fallback" in p for p in packets))
-                self.assertEqual(packets[-2:], [{"delta": "local"}, {"done": True}])
+                self.assertEqual(packets[-3:], [{"delta": "local"}, {"usage": {"input": 42, "output": 1}}, {"done": True}])
                 self.assertEqual(upstream.call_count, 2)
             with patch.object(server, "request", side_effect=request) as upstream:
                 _, packets = self.call("/api/chat", self.chat("cloud"))

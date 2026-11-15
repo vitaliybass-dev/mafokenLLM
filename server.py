@@ -126,6 +126,11 @@ def deltas(upstream, kind):
             event = json.loads(line)
             part = event.get("message", {}).get("content")
             complete = event.get("done") is True
+            if complete:
+                counts = {name: event.get(field) for name, field in
+                          (("input", "prompt_eval_count"), ("output", "eval_count"))}
+                counts = {name: value for name, value in counts.items()
+                          if type(value) is int and value >= 0}
         else:
             if not line.startswith(b"data:"):
                 continue
@@ -154,6 +159,8 @@ def deltas(upstream, kind):
         if isinstance(part, str) and part:
             yield {"delta": part}
         if complete and kind != "openai":
+            if kind == "ollama" and counts:
+                yield {"usage": counts}
             return
     if not complete:
         raise ValueError("Модель прервала ответ.")

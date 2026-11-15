@@ -2,13 +2,16 @@
 import hmac
 import json
 import os
+import socket
+import subprocess
 import sys
+from http.client import HTTPSConnection
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import (HTTPRedirectHandler, ProxyHandler, Request, build_opener)
+from urllib.request import (HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener)
 
 import account_bridge
 import capabilities as tools
@@ -35,12 +38,74 @@ class NoRedirect(HTTPRedirectHandler):
 NETWORK = build_opener(ProxyHandler({}), NoRedirect())
 
 
-def request(url, payload=None, headers=None, timeout=120):
-    return NETWORK.open(Request(
+def wifi_interface_index():
+    if sys.platform != "darwin":
+        raise ValueError("Выбор Wi-Fi доступен на macOS.")
+    try:
+        ports = subprocess.run(
+            ["/usr/sbin/networksetup", "-listallhardwareports"], capture_output=True,
+            text=True, check=True, timeout=2, env={"LC_ALL": "C"}
+        ).stdout.splitlines()
+        for label, device in zip(ports, ports[1:]):
+            if label == "Hardware Port: Wi-Fi" and device.startswith("Device: "):
+                return socket.if_nametoindex(device.removeprefix("Device: "))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    raise ValueError("Интерфейс Wi-Fi на Mac недоступен.")
+
+
+class WifiHTTPSHandler(HTTPSHandler):
+    def __init__(self, interface):
+        super().__init__()
+        self.interface = interface
+
+    def https_open(self, req):
+        def connection(host, **kwargs):
+            conn = HTTPSConnection(host, **kwargs)
+            conn._create_connection = self.connect_wifi
+            return conn
+        return self.do_open(connection, req)
+
+    def connect_wifi(self, address, timeout, source_address=None):
+        # IP_BOUND_IF and IPV6_BOUND_IF in the Darwin SDK.
+        options = {socket.AF_INET: (socket.IPPROTO_IP, 25),
+                   socket.AF_INET6: (socket.IPPROTO_IPV6, 125)}
+        last_error = None
+        for family, kind, proto, _, remote in socket.getaddrinfo(*address, type=socket.SOCK_STREAM):
+            if family not in options:
+                continue
+            sock = socket.socket(family, kind, proto)
+            try:
+                sock.settimeout(timeout)
+                level, option = options[family]
+                sock.setsockopt(level, option, self.interface)
+                sock.connect(remote)
+                return sock
+            except OSError as error:
+                sock.close()
+                last_error = error
+        raise last_error or OSError("No compatible Wi-Fi address.")
+
+
+def request(url, payload=None, headers=None, timeout=120, *, opener=None):
+    return (opener or NETWORK).open(Request(
         url,
         data=None if payload is None else json.dumps(payload).encode(),
         headers={"Content-Type": "application/json", **(headers or {})},
     ), timeout=timeout)
+
+
+def provider_request(profile):
+    if profile.get("network") != "wifi":
+        return request
+    opener = build_opener(ProxyHandler({}), NoRedirect(), WifiHTTPSHandler(wifi_interface_index()))
+
+    def via_wifi(url, payload=None, headers=None, timeout=120):
+        if urlsplit(url).scheme != "https":
+            raise ValueError("Для маршрута через Wi-Fi нужен HTTPS.")
+        return request(url, payload, headers, timeout, opener=opener)
+
+    return via_wifi
 
 
 def models():
@@ -70,7 +135,7 @@ def route(model, messages):
 
 
 def cloud_request(provider, messages, key, system=SYSTEM):
-    endpoint = provider.get("endpoint", "")
+    endpoint = provider_status.completion_endpoint(provider.get("endpoint", ""), provider.get("kind"))
     url = urlsplit(endpoint)
     if (url.scheme != "https" or not url.hostname or url.username or url.password
             or url.fragment or url.query or any(c.isspace() for c in endpoint)):
@@ -378,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
                 seen = False
                 self.emit(source=source, model=cloud_model, cloud=True)
                 try:
-                    with request(url, body, headers, timeout=30 if mode == "auto" else 120) as upstream:
+                    with provider_request(provider)(url, body, headers, timeout=30 if mode == "auto" else 120) as upstream:
                         for event in deltas(upstream, kind):
                             seen = seen or "delta" in event
                             self.emit(**event)
@@ -436,9 +501,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/extract":
                 result = tools.extract(data)
             elif self.path == "/api/connection-status":
-                result = provider_status.check(data, request)
+                result = provider_status.check(data, provider_request(data))
             elif self.path == "/api/cloud-models":
-                result = provider_status.list_models(data, request)
+                result = provider_status.list_models(data, provider_request(data))
             else:
                 result = tools.transcribe(data)
             self.headers_for("application/json")

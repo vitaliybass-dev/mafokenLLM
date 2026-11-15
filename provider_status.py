@@ -38,6 +38,18 @@ def deepseek_balance(payload):
     return {"state": "verified" if available else "unavailable", "balances": balances}
 
 
+def completion_endpoint(endpoint, kind):
+    """Expand a conventional /v1 base URL while preserving explicit routes."""
+    suffix = {"openai": "/chat/completions", "anthropic": "/messages"}.get(kind)
+    if not suffix or not isinstance(endpoint, str):
+        return endpoint
+    url = urlsplit(endpoint)
+    path = url.path.rstrip("/")
+    if path.endswith("/v1") and not url.query and not url.fragment:
+        return urlunsplit(url._replace(path=path + suffix))
+    return endpoint
+
+
 def check(data, request):
     endpoint = data.get("endpoint")
     provider = OFFICIAL.get(endpoint) if isinstance(endpoint, str) else None
@@ -94,6 +106,7 @@ def list_models(data, request):
     try:
         if not isinstance(endpoint, str) or any(c.isspace() for c in endpoint):
             raise ValueError()
+        endpoint = completion_endpoint(endpoint, data.get("kind"))
         url = urlsplit(endpoint)
         if (url.scheme != "https" or not url.hostname or url.username is not None
                 or url.password is not None or url.query or url.fragment):

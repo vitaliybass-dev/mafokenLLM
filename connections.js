@@ -143,7 +143,7 @@ function setupNextPicker() {
         if (!response.ok || result.error) throw new Error(result.error || "Не удалось загрузить модели тарифа.");
         options=result.models.map(item=>new Option(item.name,item.id));
       } else {
-        result=await localTool("cloud-models",{endpoint:profile.endpoint,key:apiKeys.get(source),kind:profile.kind});
+        result=await localTool("cloud-models",{endpoint:profile.endpoint,key:apiKeys.get(source),kind:profile.kind,network:profile.network});
         if (result.state!=="verified") throw new Error(result.message);
         options=result.models.map(id=>new Option(id,id));
       }
@@ -186,7 +186,7 @@ function budgetExhausted() {
 
 function apiResource(profile) {
   const host = endpointHost(profile?.endpoint);
-  return [profile?.name,host].filter(Boolean).join(" · ");
+  return [profile?.name,host,profile?.network==="wifi" ? "Wi-Fi вне VPN" : ""].filter(Boolean).join(" · ");
 }
 
 function apiOwner(profile) {
@@ -253,7 +253,7 @@ function connectionChanged(id, oldProfile, oldKey) {
   if (endpointChanged || (oldKey && apiKeys.get(id) && oldKey !== apiKeys.get(id))) {
     delete settings.balanceSnapshots[id];
   }
-  if (endpointChanged || oldProfile?.model !== profile.model || oldKey !== apiKeys.get(id)) {
+  if (endpointChanged || oldProfile?.model !== profile.model || (oldProfile?.network || "") !== (profile.network || "") || oldKey !== apiKeys.get(id)) {
     connectionChecks.delete(id);
     connectionReplies.delete(id);
   }
@@ -372,14 +372,14 @@ function renderConnections() {
 async function verifyConnections() {
   const checks = Object.keys(presets).filter(connectionReady);
   const jobs = checks.map(async id => {
-    const {endpoint,model,kind} = settings.providers[id];
+    const {endpoint,model,kind,network} = settings.providers[id];
     const key = apiKeys.get(id);
     const current = {pending:true, automatic:connectionChecks.get(id)?.automatic};
     connectionChecks.set(id,current);
     try {
       const official=connectionAccounts.has(endpoint);
-      const result = official ? await localTool("connection-status",{endpoint,model,key})
-        : await localTool("cloud-models",{endpoint,kind,key});
+      const result = official ? await localTool("connection-status",{endpoint,model,key,network})
+        : await localTool("cloud-models",{endpoint,kind,key,network});
       if (!official && result.state==="verified" && !result.models.includes(model)) {
         result.state = result.partial ? "unsupported" : "not_listed";
         result.message = result.partial ? "Каталог неполный; доступ к выбранной модели неизвестен." : "Каталог не подтвердил доступ к выбранной модели.";

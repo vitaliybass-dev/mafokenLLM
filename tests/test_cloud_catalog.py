@@ -47,6 +47,21 @@ class CatalogAndFallbackTest(LoopbackTestCase):
             self.assertIn("региона", packets[0]["message"])
             self.assertNotIn("models", packets[0])
 
+    def test_base_url_and_wifi_are_shared_by_catalog_and_chat(self):
+        base = "https://catalog.example/team/v1/"
+        profile = {"endpoint": base, "key": "fixture-key", "kind": "openai", "network": "wifi",
+                   "model": "fixture", "limitField": "max_tokens"}
+        def upstream(url, headers, timeout):
+            self.assertEqual(url, base + "models")
+            return io.BytesIO(b'{"data":[{"id":"fixture"}]}')
+
+        with patch.object(server, "provider_request", return_value=upstream) as transport:
+            _, packets = self.call("/api/cloud-models", profile)
+            self.assertEqual(packets, [{"state": "verified", "models": ["fixture"]}])
+            self.assertEqual(transport.call_args.args[0]["network"], "wifi")
+        address, _, _ = server.cloud_request(profile, [], "fixture-key")
+        self.assertEqual(address, base + "chat/completions")
+
     def chat(self, mode):
         return {"mode": mode, "model": "local-fixture", "allowCloud": True, "shareHistory": False,
                 "messages": [{"role": "user", "content": "previous local"}, {"role": "assistant", "content": "answer"},

@@ -256,7 +256,7 @@ async function loadModels() {
 }
 function collect() {
   return {
-    name:presets[editing].name,kind:$("kind").value,endpoint:$("endpoint").value.trim(),
+    name:presets[editing].name,network:editing==="custom" ? $("providerNetwork").value : "",kind:$("kind").value,endpoint:$("endpoint").value.trim(),
     model:$("cloudModel").value.trim(),billingLabel:$("billingLabel").value.trim(),maxTokens:Number($("maxTokens").value),
     limitField:$("limitField").value,usage:$("usage").checked
   };
@@ -266,11 +266,12 @@ function showProvider(preset) {
   resetCatalog();
   const p = settings.providers[preset] || fresh(preset);
   for (const [id,v] of Object.entries({kind:p.kind,endpoint:p.endpoint,cloudModel:p.model,
-    billingLabel:p.billingLabel || "",maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:apiKeys.get(preset) || ""})) $(id).value = v;
+    billingLabel:p.billingLabel || "",providerNetwork:p.network || "",maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:apiKeys.get(preset) || ""})) $(id).value = v;
   $("usage").checked = p.usage === true;
   formatFields();
 }
 function formatFields() {
+  $("providerNetworkField").hidden=editing!=="custom";
   for (const id of ["limitField","usage"]) $(id).closest("label").hidden = $("kind").value === "anthropic";
 }
 function resetCatalog() {
@@ -282,8 +283,9 @@ function resetCatalog() {
 }
 $("kind").onchange = () => {formatFields(); resetCatalog();};
 $("key").oninput = resetCatalog;
+$("providerNetwork").onchange = resetCatalog;
 $("fetchCatalog").onclick = async () => {
-  const {endpoint,kind} = collect();
+  const {endpoint,kind,network} = collect();
   const key = $("key").value.trim();
   if (!key || !endpoint) {
     $("catalogStatus").textContent = "Укажите адрес и ключ API этого провайдера.";
@@ -295,10 +297,11 @@ $("fetchCatalog").onclick = async () => {
   $("fetchCatalog").disabled = true;
   $("catalogStatus").textContent = "Загружаем каталог без запроса на генерацию…";
   try {
-    const result = await localTool("cloud-models",{endpoint,key,kind});
+    const result = await localTool("cloud-models",{endpoint,key,kind,network});
     if (revision !== catalogRevision) return;
     if (result.state !== "verified") {
-      $("catalogStatus").textContent = result.message;
+      $("catalogStatus").textContent = result.message + (editing==="custom" && !network && result.message?.startsWith("Провайдер не ответил")
+        ? " Если этот адрес не работает через VPN, проверьте сеть «Напрямую через Wi-Fi»." : "");
       return;
     }
     const ids = result.models;

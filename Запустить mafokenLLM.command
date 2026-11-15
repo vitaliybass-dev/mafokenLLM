@@ -14,5 +14,5 @@ for attempt in {1..30}; do
   fi
   sleep 0.1
 done
-echo "Не удалось открыть LocalChat."
+echo "Не удалось открыть mafokenLLM."
 exit 1

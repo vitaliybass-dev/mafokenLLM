@@ -8,7 +8,7 @@ function downloadText(name, text) {
   const url = URL.createObjectURL(new Blob([text], {type:"text/plain;charset=utf-8"}));
   const link = el("a");
   link.href = url;
-  link.download = name.replace(/[\x00-\x1f/\\]/g,"_").slice(0,100) || "localchat.md";
+  link.download = name.replace(/[\x00-\x1f/\\]/g,"_").slice(0,100) || "mafokenLLM.md";
   link.click();
   setTimeout(() => URL.revokeObjectURL(url),1000);
 }
@@ -30,7 +30,7 @@ function projectChoices(select, first, selected) {
 function projectOf(chat) { return projects.find(p=>p.id===chat.project); }
 function historyMarkdown(chat) {
   return "# " + chat.title + "\n\n" + chat.messages.filter(m=>m.content).map(m =>
-    "## " + (m.role==="user" ? "Вы" : (m.model || "LocalChat")) + "\n\n" + m.content).join("\n\n");
+    "## " + (m.role==="user" ? "Вы" : (m.model || "mafokenLLM")) + "\n\n" + m.content).join("\n\n");
 }
 function chatDialog() {
   $("chatName").value = active.title;

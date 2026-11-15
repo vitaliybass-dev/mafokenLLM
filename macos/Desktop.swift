@@ -170,7 +170,7 @@ private final class DesktopModel: ObservableObject {
     func requestAccess() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
-        status = "Включите LocalChat в «Универсальном доступе», затем нажмите «Обновить список»."
+        status = "Включите mafokenLLM в «Универсальном доступе», затем нажмите «Обновить список»."
     }
 
     func loadApplications() {
@@ -332,7 +332,7 @@ private final class DesktopModel: ObservableObject {
         guard let window = selectedWindow, let app = selectedApp else { return }
         guard CGPreflightScreenCaptureAccess() else {
             _ = CGRequestScreenCaptureAccess()
-            status = "Разрешите захват экрана для LocalChat, затем повторите снимок. macOS может попросить переоткрыть приложение."
+            status = "Разрешите захват экрана для mafokenLLM, затем повторите снимок. macOS может попросить переоткрыть приложение."
             return
         }
         stop()

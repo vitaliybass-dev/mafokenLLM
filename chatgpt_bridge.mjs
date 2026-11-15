@@ -23,7 +23,7 @@ async function key(create=false) {
 
 const storageDir=join(homedir(),"Library","Application Support","LocalChat","ChatGPT");
 const client=createChatGPT({
-  appName:"LocalChat",
+  appName:"mafokenLLM",
   appId:"app.localchat.siwc",
   sendHostId:true,
   redirectPort:0,
@@ -53,7 +53,7 @@ const client=createChatGPT({
 const errors={
   cancelled:"Вход отменён.",
   sign_in_required:"Сначала войдите в ChatGPT.",
-  sharing_not_enabled:"Разрешите LocalChat использовать тариф в окне входа ChatGPT.",
+  sharing_not_enabled:"Разрешите mafokenLLM использовать тариф в окне входа ChatGPT.",
   storage_encryption_unavailable:"Разблокируйте Связку ключей macOS и повторите вход.",
   connection_busy:"Дождитесь окончания входа или отмените его.",
   network_error:"Не удалось связаться с ChatGPT.",

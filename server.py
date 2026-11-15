@@ -1,4 +1,4 @@
-"""LocalChat HTTP service. No installation beyond Python 3.9+."""
+"""mafokenLLM HTTP service. No installation beyond Python 3.9+."""
 import json
 import os
 import sys
@@ -393,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     addr = ("127.0.0.1", int(os.environ.get("LOCALCHAT_PORT", "8769")))
     with ThreadingHTTPServer(addr, Handler) as httpd:
-        print(f"LocalChat: http://127.0.0.1:{httpd.server_port}", flush=True)
+        print(f"mafokenLLM: http://127.0.0.1:{httpd.server_port}", flush=True)
         if os.environ.get("LOCALCHAT_NATIVE_NONCE"):
             def stop_when_parent_exits():
                 sys.stdin.buffer.read(1)

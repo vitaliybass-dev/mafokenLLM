@@ -44,11 +44,11 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 795),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable],
                           backing: .buffered, defer: false)
-        window.title = "LocalChat"
+        window.title = "mafokenLLM"
         window.minSize = NSSize(width: 620, height: 490)
         window.isReleasedWhenClosed = false
         window.center()
-        showStartup("Запускаю LocalChat…")
+        showStartup("Запускаю mafokenLLM…")
         showMainWindow()
         startBackend()
     }
@@ -56,10 +56,10 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
     private func buildMenu() {
         let bar = NSMenu()
         let app = NSMenuItem()
-        app.submenu = NSMenu(title: "LocalChat")
-        app.submenu?.addItem(withTitle: "О LocalChat", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.submenu = NSMenu(title: "mafokenLLM")
+        app.submenu?.addItem(withTitle: "О mafokenLLM", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         app.submenu?.addItem(.separator())
-        app.submenu?.addItem(withTitle: "Выйти из LocalChat", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        app.submenu?.addItem(withTitle: "Выйти из mafokenLLM", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         bar.addItem(app)
 
         let edit = NSMenuItem()
@@ -129,7 +129,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
             try backend.run()
             launched = true
         } catch {
-            showStartup("Не удалось запустить сервер LocalChat. Проверьте, доступен ли системный Python 3.")
+            showStartup("Не удалось запустить сервер mafokenLLM. Проверьте, доступен ли системный Python 3.")
             return
         }
         Task {
@@ -152,7 +152,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
             }
             if !ready, backend.isRunning {
                 backend.terminate()
-                showStartup("Сервер LocalChat не подтвердил запуск. Переоткройте приложение.")
+                showStartup("Сервер mafokenLLM не подтвердил запуск. Переоткройте приложение.")
             }
         }
     }
@@ -161,7 +161,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         let root = NSView()
         let control = NSButton(title: "Управление окном", target: self, action: #selector(openDesktop))
         control.bezelStyle = .rounded
-        let heading = NSTextField(labelWithString: "LocalChat")
+        let heading = NSTextField(labelWithString: "mafokenLLM")
         heading.font = .systemFont(ofSize: 13, weight: .semibold)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -219,7 +219,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
         if ready && (error as NSError).code != NSURLErrorCancelled {
-            showStartup("Не удалось загрузить чат. Переоткройте LocalChat.")
+            showStartup("Не удалось загрузить чат. Переоткройте mafokenLLM.")
         }
     }
 
@@ -254,7 +254,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         if let desktopWindow { desktopWindow.makeKeyAndOrderFront(nil); return }
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 680),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.title = "LocalChat · Управление окном"
+        panel.title = "mafokenLLM · Управление окном"
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.minSize = NSSize(width: 600, height: 540)

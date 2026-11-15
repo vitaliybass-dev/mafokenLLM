@@ -1,4 +1,4 @@
-"""Private connection from LocalChat's HTTP server to the official ChatGPT SDK."""
+"""Private connection from mafokenLLM's HTTP server to the official ChatGPT SDK."""
 import atexit
 from contextlib import contextmanager
 from http.client import HTTPConnection

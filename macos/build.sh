@@ -2,7 +2,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 root="$(pwd)"
-dest="${1:-$HOME/Applications/LocalChat.app}"
+dest="${1:-$HOME/Applications/mafokenLLM.app}"
 if [[ "$dest" != /* || "$dest" != *.app ]]; then
   echo 'Укажите абсолютный путь к файлу .app.'
   exit 2
@@ -10,7 +10,7 @@ fi
 mkdir -p "$(dirname -- "$dest")"
 stage="$(mktemp -d "$(dirname -- "$dest")/.localchat-build.XXXXXX")"
 trap 'rm -rf -- "$stage"' EXIT
-app="$stage/LocalChat.app"
+app="$stage/mafokenLLM.app"
 runtime="$app/Contents/Resources/Runtime"
 mkdir -p "$app/Contents/MacOS" "$runtime"
 cp macos/Info.plist "$app/Contents/Info.plist"

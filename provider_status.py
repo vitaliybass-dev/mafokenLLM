@@ -2,6 +2,7 @@
 import json
 import re
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 # Match the actual configured endpoint, including profiles under "Свой API".
 OFFICIAL = {
@@ -15,7 +16,8 @@ OFFICIAL = {
 HTTP_STATUS = {
     401: "Провайдер отклонил ключ API.",
     402: "Провайдер требует пополнить счёт.",
-    403: "У ключа нет прав на проверку.",
+    403: "Провайдер отказал в доступе. Проверьте права ключа и условия доступа.",
+    451: "Провайдер сообщил об ограничении доступа (HTTP 451).",
     404: "Провайдер не нашёл указанную модель.",
     429: "Провайдер ограничил частоту проверок. Повторите позже.",
 }
@@ -82,3 +84,96 @@ def check(data, request):
         return {"state": "error", "message": "Провайдер не ответил. Повторите проверку."}
     except (ValueError, KeyError, TypeError):
         return {"state": "error", "message": "Провайдер вернул неизвестный формат ответа."}
+
+
+def list_models(data, request):
+    """Fetch a catalog using only the host and key selected by the user."""
+    endpoint, key = data.get("endpoint"), data.get("key")
+    if not isinstance(key, str) or not 1 <= len(key) <= 4096 or any(not 32 < ord(c) < 127 for c in key):
+        return {"state": "error", "message": "Укажите действующий ключ API."}
+    try:
+        if not isinstance(endpoint, str) or any(c.isspace() for c in endpoint):
+            raise ValueError()
+        url = urlsplit(endpoint)
+        if (url.scheme != "https" or not url.hostname or url.username is not None
+                or url.password is not None or url.query or url.fragment):
+            raise ValueError()
+    except ValueError:
+        return {"state": "error", "message": "Укажите полный HTTPS-адрес API без параметров."}
+
+    provider = OFFICIAL.get(endpoint)
+    headers = {"Accept": "application/json"}
+    if provider == "gemini":
+        headers["x-goog-api-key"] = key
+        path = "/v1beta/models"
+    else:
+        kind = "anthropic" if provider == "anthropic" else data.get("kind") if not provider else "openai"
+        if kind == "anthropic":
+            headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+            suffix = "/messages"
+        elif kind == "openai":
+            headers["Authorization"] = "Bearer " + key
+            suffix = "/chat/completions"
+        else:
+            return {"state": "unsupported", "message": "Для этого API укажите ID модели вручную."}
+        if not url.path.endswith(suffix):
+            return {"state": "unsupported", "message": "Для этого адреса укажите ID модели вручную."}
+        path = url.path[:-len(suffix)] + "/models"
+
+    found, seen = set(), set()
+    params = {}
+    try:
+        for _ in range(4):
+            query = urlencode(params)
+            catalog = urlunsplit(("https", url.netloc, path, query, ""))
+            with request(catalog, headers=headers, timeout=3) as upstream:
+                payload = json.loads(upstream.read(2 * 1024 * 1024 + 1))
+            rows = payload["models" if provider == "gemini" else "data"]
+            if not isinstance(rows, list):
+                raise ValueError()
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if provider == "gemini":
+                    if "generateContent" not in (row.get("supportedGenerationMethods") or []):
+                        continue
+                    name = row.get("name", "")
+                    if isinstance(name, str):
+                        name = name.removeprefix("models/")
+                else:
+                    name = row.get("id")
+                if isinstance(name, str) and 0 < len(name) <= 256 and all(32 < ord(c) < 127 for c in name):
+                    found.add(name)
+            if provider == "gemini":
+                cursor, param = payload.get("nextPageToken"), "pageToken"
+            elif provider == "anthropic" and payload.get("has_more"):
+                cursor, param = payload["last_id"], "after_id"
+                if not cursor:
+                    raise ValueError()
+            else:
+                cursor = None
+            if not cursor:
+                return {"state": "verified", "models": sorted(found)}
+            if not isinstance(cursor, str) or len(cursor) > 2048 or cursor in seen:
+                raise ValueError()
+            seen.add(cursor)
+            params = {param: cursor}
+        return {"state": "verified", "models": sorted(found), "partial": True}
+    except HTTPError as error:
+        with error:
+            try:
+                payload = json.loads(error.read(16384))
+                code = payload["error"].get("code")
+            except (ValueError, KeyError, TypeError, AttributeError, OSError):
+                code = None
+        if code == "unsupported_country_region_territory":
+            message = "Провайдер сообщил, что доступ из этого региона недоступен."
+        elif error.code == 404:
+            message = "Каталог по этому адресу недоступен (HTTP 404). Проверьте адрес или введите ID модели."
+        else:
+            message = HTTP_STATUS.get(error.code, f"Не удалось загрузить каталог (HTTP {error.code}).")
+        return {"state": "error", "message": message}
+    except (URLError, OSError):
+        return {"state": "error", "message": "Провайдер не ответил. Повторите проверку или выберите модель на Mac."}
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {"state": "error", "message": "Провайдер вернул неизвестный формат каталога."}

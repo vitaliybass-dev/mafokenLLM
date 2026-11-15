@@ -17,6 +17,7 @@ let settings = {preset:"openai",local:"gemma4:12b-backup",providers:{},balanceSn
 let chats = read("localchat.chats", []);
 let active = chats.find(c => c.id === read("localchat.active", null));
 let installed = [], busy = false, editing = "", apiKeys = new Map(), controller = null;
+let catalogRevision = 0;
 const transientUploads = new WeakMap();
 const efforts = {
   brief:"Отвечай кратко, сразу по делу. Дай только необходимые детали.",
@@ -202,11 +203,15 @@ function messageNode(message) {
       action("Изменить в ветке",()=>forkChat(index,true));
     }
   }
-  node.append(meta,content,error);
+  const fallback=el("small",undefined,"muted");
+  fallback.hidden=true;
+  node.append(meta,fallback,content,error);
   function update(parsed = false) {
     label.textContent=message.role==="user" ? "Вы"+(message.files?.length ? " · "+message.files.join(", ") : "") :
       (message.model ? message.source+" · "+message.model : message.status || "Ожидаем ответ…");
     usage.textContent=message.usage ? "· токены: вход "+(message.usage.input ?? "—")+", выход "+(message.usage.output ?? "—") : "";
+    fallback.textContent=message.fallback || "";
+    fallback.hidden=!message.fallback;
     error.textContent=message.error || "";
     if (parsed && message.role==="assistant" && message.content) markdown(content,message.content);
     else content.textContent=message.content;
@@ -264,6 +269,7 @@ function collect() {
 }
 function showProvider(preset) {
   editing = preset;
+  resetCatalog();
   const p = settings.providers[preset] || fresh(preset);
   for (const [id,v] of Object.entries({kind:p.kind,endpoint:p.endpoint,cloudModel:p.model,
     maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:apiKeys.get(preset) || ""})) $(id).value = v;
@@ -273,7 +279,55 @@ function showProvider(preset) {
 function formatFields() {
   for (const id of ["limitField","usage"]) $(id).closest("label").hidden = $("kind").value === "anthropic";
 }
-$("kind").onchange = formatFields;
+function resetCatalog() {
+  catalogRevision++;
+  $("fetchCatalog").disabled = false;
+  $("catalogStatus").textContent = "";
+  $("catalogField").hidden = true;
+  $("cloudCatalog").replaceChildren();
+}
+$("kind").onchange = () => {formatFields(); resetCatalog();};
+$("key").oninput = resetCatalog;
+$("fetchCatalog").onclick = async () => {
+  const {endpoint,kind} = collect();
+  const key = $("key").value.trim();
+  if (!key || !endpoint) {
+    $("catalogStatus").textContent = "Укажите адрес и ключ API этого провайдера.";
+    (!endpoint ? $("endpoint") : $("key")).focus();
+    return;
+  }
+  resetCatalog();
+  const revision = catalogRevision;
+  $("fetchCatalog").disabled = true;
+  $("catalogStatus").textContent = "Загружаем каталог без запроса на генерацию…";
+  try {
+    const result = await localTool("cloud-models",{endpoint,key,kind});
+    if (revision !== catalogRevision) return;
+    if (result.state !== "verified") {
+      $("catalogStatus").textContent = result.message;
+      return;
+    }
+    const ids = result.models;
+    $("catalogStatus").textContent = ids.length
+      ? "Моделей в каталоге: " + ids.length + (result.partial ? " · показаны первые страницы." : ".")
+        + " Для чата выберите модель с поддержкой формата API выше."
+      : "Провайдер не вернул подходящих моделей. Можно ввести ID вручную.";
+    $("cloudCatalog").replaceChildren(new Option("Выберите модель",""), ...ids.map(id=>new Option(id,id)));
+    $("cloudCatalog").value = ids.includes($("cloudModel").value) ? $("cloudModel").value : "";
+    $("catalogField").hidden = !ids.length;
+  } catch (error) {
+    if (revision === catalogRevision) $("catalogStatus").textContent = error.message;
+  } finally {
+    if (revision === catalogRevision) $("fetchCatalog").disabled = false;
+  }
+};
+$("cloudCatalog").onchange = () => {
+  if ($("cloudCatalog").value) $("cloudModel").value = $("cloudCatalog").value;
+};
+$("cloudModel").oninput = () => {
+  $("cloudCatalog").value = [...$("cloudCatalog").options].some(o => o.value === $("cloudModel").value)
+    ? $("cloudModel").value : "";
+};
 async function openModelSettings(preset = settings.preset) {
   await loadModels();
   if (busy || $("dialog").open) return;
@@ -286,7 +340,7 @@ async function openModelSettings(preset = settings.preset) {
 $("settings").onclick = () => openModelSettings();
 $("preset").onchange = () => showProvider($("preset").value);
 $("close").onclick = () => $("dialog").close();
-$("dialog").onclose = () => { $("key").value = ""; };
+$("dialog").onclose = () => { $("key").value = ""; resetCatalog(); };
 $("config").onsubmit = event => {
   event.preventDefault();
   const provider = collect();
@@ -305,7 +359,7 @@ $("config").onsubmit = event => {
   sync();
   $("dialog").close();
 };
-$("endpoint").oninput = () => $("endpoint").setCustomValidity("");
+$("endpoint").oninput = () => { $("endpoint").setCustomValidity(""); resetCatalog(); };
 $("mode").onchange = () => {
   active.mode = $("mode").value;
   save(); sync();
@@ -426,6 +480,7 @@ async function generate(replace, savedFiles) {
           if (packet.cloud) {active.cloudCalls=(active.cloudCalls || 0)+1; save();}
         }
         if (packet.status) answer.status=packet.status;
+        if (packet.fallback) { answer.fallback=packet.fallback; delete answer.usage; }
         if (packet.usage) answer.usage=packet.usage;
         if (packet.error) answer.error=packet.error;
         if (packet.done) complete=true;

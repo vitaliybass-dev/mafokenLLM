@@ -110,9 +110,9 @@
     </div>
   </form>
 </dialog>
-<dialog id="dialog">
+<dialog id="dialog" aria-labelledby="modelSettingsTitle">
   <form id="config" autocomplete="off">
-    <h2>Модели и сервисы</h2>
+    <h2 id="modelSettingsTitle">Модели и сервисы</h2>
     <label>Локальная модель <select id="localModel"></select></label>
     <label>Облачный провайдер
       <select id="preset">
@@ -125,6 +125,9 @@
     <label>Полный адрес API <input type="url" id="endpoint" placeholder="https://…/v1/chat/completions"></label>
     <label>Идентификатор модели <input id="cloudModel" placeholder="Как в кабинете провайдера"></label>
     <label>Ключ API <input type="password" id="key" autocomplete="off" placeholder="Действует до закрытия или перезагрузки вкладки"></label>
+    <button type="button" id="fetchCatalog">Загрузить модели провайдера</button>
+    <p id="catalogStatus" role="status"></p>
+    <label id="catalogField" hidden>Модели из каталога <select id="cloudCatalog"></select></label>
     <label>Лимит токенов на ответ <input type="number" id="maxTokens" min="128" max="32768" step="1" required></label>
     <label>Параметр лимита для Chat Completions
       <select id="limitField"><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens</option></select>

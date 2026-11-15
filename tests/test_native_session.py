@@ -10,7 +10,7 @@ from unittest.mock import patch
 import server
 
 
-class NativeSessionTest(unittest.TestCase):
+class LoopbackTestCase(unittest.TestCase):
     def setUp(self):
         self.http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         self.http.native_token = b"fixture-session"
@@ -35,6 +35,8 @@ class NativeSessionTest(unittest.TestCase):
         finally:
             conn.close()
 
+
+class NativeSessionTest(LoopbackTestCase):
     def test_non_native_cannot_use_oauth_or_subscription(self):
         with patch.object(server.account_bridge, "status") as status, patch.object(server.account_bridge, "send") as send:
             for path, data in [

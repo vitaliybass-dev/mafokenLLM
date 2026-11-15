@@ -47,7 +47,7 @@
             <small id="routeDetail"></small>
           </div>
           <div class="route-actions">
-            <button type="button" id="pickNextRoute" aria-haspopup="dialog">На один запрос</button>
+            <button type="button" id="pickNextRoute" aria-haspopup="dialog">Выбрать модель</button>
             <button type="button" id="routeAccounts">Аккаунты и API</button>
           </div>
         </div>
@@ -82,8 +82,8 @@
 </div>
 <dialog id="nextRouteDialog" aria-labelledby="nextRouteHeading">
   <form id="nextRouteForm" autocomplete="off">
-    <h2 id="nextRouteHeading">На один запрос</h2>
-    <p>После отправки вернётся обычный режим чата. Разрешения на облако и файлы действуют как обычно.</p>
+    <h2 id="nextRouteHeading">Модель для этого чата</h2>
+    <p>Выбранная модель будет использоваться в этом чате, пока вы её не смените.</p>
     <label>Источник ответа <select id="nextSource" autofocus></select></label>
     <label id="nextLocalField" hidden>Модель Ollama <select id="nextLocalModel"></select></label>
     <label id="nextApiField" hidden>ID модели API <input id="nextApiModel" maxlength="256" placeholder="Модель из настроек"></label>

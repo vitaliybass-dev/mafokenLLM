@@ -287,11 +287,13 @@ function attachLocalScreenCapture(data) {
       pending.filter(file => file.mime).length >= 2 ||
       typeof data !== "string" || data.length > 2796204) return false;
   pending.push({name:"Снимок окна.jpg",mime:"image/jpeg",data,localOnly:true});
-  active.mode = "local";
+  if (!active.modelChoice) active.mode = "local";
   save();
   showPending(true);
   sync();
-  notice("Снимок приложен. Запрос выполнит модель на Mac.");
+  notice(currentTarget().mode === "local"
+    ? "Снимок приложен. Запрос выполнит модель на Mac."
+    : "Снимок приложен. Для отправки выберите модель на Mac.");
   return true;
 }
 

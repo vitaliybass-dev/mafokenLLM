@@ -81,12 +81,12 @@ function sync() {
   $("allow").checked = active.allow;
   $("history").checked = active.history;
   $("shareContext").checked = !!active.shareContext;
-  $("mode").value = active.mode;
+  const effectiveMode=currentTarget().mode;
+  $("mode").value = effectiveMode;
   $("effort").value = active.effort || "normal";
   for (const id of ["new","temp","settings","connections","projects","prefs","chatMenu","mode","allow",
-      "history","shareContext","routeAccounts","draft","send","attach","effort","canvasAttach","canvasUndo"])
+      "history","shareContext","routeAccounts","pickNextRoute","draft","send","attach","effort","canvasAttach","canvasUndo"])
     $(id).disabled = lock;
-  const effectiveMode=currentTarget().mode;
   $("history").disabled = lock || !active.allow || effectiveMode === "local";
   $("shareContext").disabled = $("history").disabled;
   $("allow").disabled = lock || effectiveMode === "local";
@@ -360,6 +360,7 @@ $("endpoint").oninput = () => { $("endpoint").setCustomValidity(""); resetCatalo
 $("mode").onchange = () => {
   clearNotice();
   active.mode = $("mode").value;
+  delete active.modelChoice;
   save(); sync();
   if (active.mode === "plan") refreshChatGPT();
 };
@@ -440,7 +441,6 @@ async function generate(replace, savedFiles) {
     active.messages.splice(replace,1,answer);
   }
   busy=true;
-  nextChoices.delete(active);
   controller=new AbortController();
   render();
   const view=messageNode(answer);

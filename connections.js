@@ -9,7 +9,6 @@ const connectionAccounts = new Map([
 ]);
 const connectionChecks = new Map();
 const connectionReplies = new Map();
-const nextChoices = new WeakMap();
 let pickerRevision=0;
 
 function chooseTarget(choice, mode, defaultModel, preset, profiles) {
@@ -24,7 +23,7 @@ function chooseTarget(choice, mode, defaultModel, preset, profiles) {
 }
 
 function currentTarget() {
-  return chooseTarget(nextChoices.get(active),active.mode,settings.local,settings.preset,settings.providers);
+  return chooseTarget(active.modelChoice,active.mode,settings.local,settings.preset,settings.providers);
 }
 
 
@@ -111,14 +110,14 @@ function updateNextPicker(choice) {
 function setupNextPicker() {
   const dialog=$("nextRouteDialog");
   $("pickNextRoute").onclick=()=>{
-    const choice=nextChoices.get(active);
+    const choice=active.modelChoice;
     const selected=choice?.mode==="cloud" ? choice.profileId : choice?.mode || "default";
     const apiOptions=Object.keys(presets).map(id=>{
       const profile=settings.providers[id];
       return new Option("API · " + presets[id].name + (profile?.model ? " · "+profile.model : "")
         + (apiKeys.get(id) ? "" : " · без ключа"),id);
     });
-    $("nextSource").replaceChildren(new Option("Режим чата","default"),new Option("Этот Mac · Ollama","local"),
+    $("nextSource").replaceChildren(new Option("По умолчанию для режима чата","default"),new Option("Этот Mac · Ollama","local"),
       ...apiOptions,new Option("Тариф ChatGPT","plan"));
     $("nextSource").value=selected;
     dialog.showModal();
@@ -168,12 +167,18 @@ function setupNextPicker() {
   $("nextRouteForm").onsubmit=event=>{
     event.preventDefault();
     const source=$("nextSource").value;
-    if (source==="default") nextChoices.delete(active);
+    if (source==="default") delete active.modelChoice;
     else if (source==="local") {
       if (!$("nextLocalModel").value) { $("nextPickerStatus").textContent="Выберите локальную модель."; return; }
-      nextChoices.set(active,{mode:"local",model:$("nextLocalModel").value});
-    } else if (source==="plan") nextChoices.set(active,{mode:"plan",model:$("nextCatalog").value});
-    else nextChoices.set(active,{mode:"cloud",profileId:source,model:$("nextApiModel").value.trim()});
+      active.modelChoice = {mode:"local",model:$("nextLocalModel").value};
+    } else if (source==="plan") {
+      active.modelChoice = {mode:"plan",model:$("nextCatalog").value};
+    } else {
+      const model = $("nextApiModel").value.trim() || settings.providers[source]?.model;
+      if (!model) { $("nextPickerStatus").textContent="Укажите ID модели API."; return; }
+      active.modelChoice = {mode:"cloud",profileId:source,model};
+    }
+    save();
     dialog.close();
     clearNotice();
     sync();
@@ -203,7 +208,7 @@ function renderRoute() {
   const privacy=[active.history ? "с историей" : "без истории", active.shareContext ? "файлы и настройки разрешены" : "файлы и настройки остаются на Mac"].join(" · ");
   if (busy) {
     title="Запрос выполняется";
-    detail=nextChoices.has(active) ? "Разовый выбор сохранён для следующей отправки." : "Фактический источник указан у ответа.";
+    detail="Фактический источник указан у ответа.";
   } else if (route.kind==="blocked") {
     title=modelsLoading && (target.mode==="auto" || target.mode==="local") ? "Проверяем Ollama…" : "Отправка недоступна";
     detail=title==="Проверяем Ollama…" ? "Проверяем список установленных моделей на Mac." : route.detail;
@@ -220,14 +225,14 @@ function renderRoute() {
     detail=[apiOwner(profile),route.kind==="auto" ? "Mac выбирает маршрут" : profile.model,
       last?.model === profile?.model && last?.ok === false ? "последний запрос без ответа" : check?.state === "error" ? "проверка подключения не прошла" : "",privacy].filter(Boolean).join(" · ");
   }
-  const choice=nextChoices.get(active);
+  const choice=active.modelChoice;
   if (choice && !busy && route.kind==="blocked") {
     const requested=choice.mode==="local" ? choice.model : choice.mode==="plan" ? "Тариф ChatGPT"+(target.planModel ? " · "+target.planModel : "")
       : "API · " + (apiResource(profile) || presets[choice.profileId].name) + (profile?.model ? " · "+profile.model : "");
     detail=requested + " — " + detail;
   }
   $("pickNextRoute").dataset.picked=!!choice;
-  $("pickNextRoute").textContent=choice ? "Изменить разовый выбор" : "На один запрос";
+  $("pickNextRoute").textContent=choice ? "Сменить модель" : "Выбрать модель";
   $("routeCard").dataset.tone=busy ? "idle" : route.kind;
   if ($("routeTitle").textContent!==title) $("routeTitle").textContent=title;
   if ($("routeDetail").textContent!==detail) $("routeDetail").textContent=detail;

@@ -16,6 +16,7 @@ from urllib.request import (HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Req
 import account_bridge
 import capabilities as tools
 import provider_status
+import iphone
 
 ROOT = Path(__file__).resolve().parent
 OLLAMA = "http://127.0.0.1:11434"
@@ -331,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self.path == "/api/iphone":
+            return self.manage_iphone()
         account_actions = {"/api/account/begin": "/begin", "/api/account/cancel": "/cancel",
                            "/api/account/disconnect": "/disconnect"}
         if self.path not in ("/api/chat", "/api/extract", "/api/transcribe", "/api/connection-status", "/api/cloud-models", *account_actions):
@@ -496,6 +499,32 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
+    def manage_iphone(self):
+        if not self.same_host():
+            self.send_error(403)
+            return
+        if not self.require_native():
+            return
+        state = getattr(self.server, "iphone", None)
+        if state is None:
+            self.headers_for("application/json", 503)
+            self.emit(error="Интерфейс iPhone недоступен.")
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 1_420_000 or self.headers.get_content_type() != "application/json":
+                raise ValueError("Неверный запрос управления.")
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict):
+                raise ValueError("Неверный запрос управления.")
+            result = state.manage(data)
+        except (ValueError, OSError):
+            self.headers_for("application/json", 400)
+            self.emit(error="Не удалось настроить iPhone. Проверьте подключение Tailscale.")
+            return
+        self.headers_for("application/json")
+        self.emit(**result)
+
     def run_tool(self, data):
         try:
             if self.path == "/api/extract":
@@ -524,6 +553,12 @@ if __name__ == "__main__":
             httpd.native_token = sys.stdin.buffer.readline(128).rstrip(b"\r\n")
             if len(httpd.native_token) < 64:
                 raise SystemExit("Missing native session token.")
+            try:
+                phone = ThreadingHTTPServer(("127.0.0.1", iphone.PORT), iphone.PhoneHandler)
+                phone.companion = httpd.iphone = iphone.Companion(models, request, DEFAULT_MODEL)
+                Thread(target=phone.serve_forever, daemon=True).start()
+            except OSError:
+                pass  # Another process may already own the optional companion port.
             def stop_when_parent_exits():
                 sys.stdin.buffer.read(1)
                 httpd.shutdown()

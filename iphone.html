@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#111614">
+<title>mafokenLLM · Mac</title>
+<link rel="stylesheet" href="/iphone.css">
+<script src="/iphone.js" defer></script>
+</head>
+<body>
+<main>
+  <header><small>УПРАВЛЕНИЕ MAC</small><h1>mafokenLLM</h1><p id="status" role="status">Откройте «Экран → Подключить iPhone» в mafokenLLM на Mac.</p></header>
+  <form id="pair" class="card">
+    <label for="code">Код с Mac</label>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required>
+    <button>Подключить iPhone</button>
+  </form>
+  <div id="session" hidden>
+    <nav aria-label="Разделы">
+      <button id="showChat" aria-pressed="true">Чат</button>
+      <button id="showControls" aria-pressed="false">Mac</button>
+      <button id="disconnect">Выйти</button>
+    </nav>
+    <section id="chat" class="card">
+      <label for="model">Модель Ollama на Mac</label>
+      <select id="model"></select>
+      <div id="messages" role="log" aria-label="Сообщения"></div>
+      <form id="prompt">
+        <label for="message">Сообщение</label>
+        <textarea id="message" rows="3" maxlength="16000" required placeholder="Напишите сообщение"></textarea>
+        <button id="send">Отправить</button>
+      </form>
+    </section>
+    <section id="controls" class="card" hidden>
+      <h2>Действия на Mac</h2>
+      <p>Запрос появится в приложении на Mac. Подтвердите его там.</p>
+      <button data-command="screenshot">Снимок основного дисплея</button>
+      <img id="screen" alt="Снимок экрана Mac" hidden>
+      <button data-command="desktop">Открыть «Управление Mac»</button>
+      <button data-command="mute">Выключить звук</button>
+      <button data-command="unmute">Включить звук</button>
+      <label for="volume">Громкость в процентах</label>
+      <input id="volume" type="number" min="0" max="100" step="1" inputmode="numeric" value="50">
+      <button data-command="volume">Изменить громкость</button>
+      <p id="commandStatus" role="status"></p>
+    </section>
+  </div>
+</main>
+</body>
+</html>

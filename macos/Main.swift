@@ -33,6 +33,8 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
     private var window: NSWindow!
     private var web: WKWebView!
     private var desktopWindow: NSWindow?
+    private lazy var iphone = IPhoneControl(nonce: nonce, window: { [weak self] in self?.window },
+                                          openDesktop: { [weak self] in self?.openDesktop() })
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -100,6 +102,8 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         let item = desktop.submenu!.addItem(withTitle: "Управление Mac", action: #selector(openDesktop), keyEquivalent: "d")
         item.keyEquivalentModifierMask = [.command, .shift]
         item.target = self
+        let phone = desktop.submenu!.addItem(withTitle: "Подключить iPhone…", action: #selector(openIPhone), keyEquivalent: "")
+        phone.target = self
         bar.addItem(desktop)
         NSApp.mainMenu = bar
     }
@@ -275,6 +279,11 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         let panel = NSSavePanel()
         panel.nameFieldStringValue = suggestedFilename
         panel.beginSheetModal(for: window) { result in completionHandler(result == .OK ? panel.url : nil) }
+    }
+
+    @objc private func openIPhone() {
+        showMainWindow()
+        iphone.show()
     }
 
     @objc private func openDesktop() {

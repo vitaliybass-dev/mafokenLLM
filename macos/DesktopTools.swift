@@ -579,3 +579,53 @@ struct DesktopAudioPane: View {
     }
 
 }
+
+@MainActor
+func performIPhoneAudio(_ kind: String, value: Int?) -> String {
+    let scope = kAudioObjectPropertyScopeOutput
+    let device = DesktopAudio.defaultDevice(scope)
+    if kind == "volume", let value, (0...100).contains(value) {
+        let levels = [kAudioHardwareServiceDeviceProperty_VirtualMainVolume, kAudioDevicePropertyVolumeScalar]
+        for selector in levels {
+            let property = DesktopAudio.address(selector, scope: scope)
+            if DesktopAudio.canWrite(device, property),
+               DesktopAudio.write(device, property, value: Float32(value) / 100) {
+                return "Громкость изменена."
+            }
+        }
+    } else if kind == "mute" || kind == "unmute" {
+        let mute = DesktopAudio.address(kAudioDevicePropertyMute, scope: scope)
+        if DesktopAudio.canWrite(device, mute), DesktopAudio.write(device, mute, value: UInt32(kind == "mute" ? 1 : 0)) {
+            return kind == "mute" ? "Звук выключен." : "Звук включён."
+        }
+    }
+    return "Текущее устройство не поддерживает эту настройку."
+}
+
+
+@MainActor
+func captureIPhoneScreen() async throws -> Data {
+    struct CaptureError: LocalizedError { let errorDescription: String? }
+    guard CGPreflightScreenCaptureAccess() else {
+        _ = CGRequestScreenCaptureAccess()
+        throw CaptureError(errorDescription: "Разрешите запись экрана на Mac и повторите запрос.")
+    }
+    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    guard let screen = content.displays.first(where: { $0.displayID == CGMainDisplayID() }) else {
+        throw CaptureError(errorDescription: "Основной дисплей недоступен.")
+    }
+    let config = SCStreamConfiguration()
+    let scale = min(1, 1300 / Double(max(screen.width, screen.height, 1)))
+    config.width = max(1, Int(Double(screen.width) * scale))
+    config.height = max(1, Int(Double(screen.height) * scale))
+    config.showsCursor = true
+    let filter = SCContentFilter(display: screen, excludingApplications: content.applications.filter {
+        $0.processID == getpid()
+    }, exceptingWindows: [])
+    let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+    guard let jpeg = NSBitmapImageRep(cgImage: image).representation(using: .jpeg, properties: [.compressionFactor: 0.7]),
+          jpeg.count <= 1_000_000 else {
+        throw CaptureError(errorDescription: "Не удалось подготовить снимок для iPhone.")
+    }
+    return jpeg
+}

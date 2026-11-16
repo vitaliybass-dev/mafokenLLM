@@ -1,0 +1,22 @@
+:root { color-scheme: dark; font: 17px system-ui, sans-serif; background: #111614; color: #eaf3ec; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+main { max-width: 42rem; margin: auto; padding: max(1.25rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1.25rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left)); }
+h1 { font-size: clamp(2rem, 8vw, 3rem); letter-spacing: -.045em; margin: .2rem 0; }
+h2 { font-size: 1.1rem; margin: 0; }
+small, p, label { color: #adc0b3; }
+small { letter-spacing: .12em; }
+.card { display: grid; gap: .65rem; background: #1b241f; border: 1px solid #35463a; border-radius: 1rem; padding: 1rem; }
+button, input, select, textarea { width: 100%; min-height: 44px; font: inherit; border-radius: .7rem; border: 1px solid #43594a; padding: .5rem .65rem; }
+button { background: #b4e3a7; color: #112011; font-weight: 650; }
+button:disabled { opacity: .5; }
+input, select, textarea { background: #111a14; color: inherit; }
+nav { display: flex; gap: .45rem; margin: .8rem 0; }
+nav button { background: #24332a; color: inherit; }
+nav button[aria-pressed="true"] { background: #b4e3a7; color: #112011; }
+#messages { display: grid; gap: .6rem; max-height: 50vh; overflow: auto; }
+#messages p { margin: 0; padding: .65rem; background: #111a14; border-radius: .65rem; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+#messages p.user { background: #304435; }
+#prompt { display: grid; gap: .55rem; }
+#screen { display: block; width: 100%; height: auto; border-radius: .7rem; }

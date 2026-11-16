@@ -75,6 +75,46 @@ private struct Proposal: Identifiable {
     }
 }
 
+private enum DesktopSection: String, CaseIterable, Identifiable {
+    case windows = "Окна"
+    case screen = "Экран и курсор"
+    case audio = "Звук"
+
+    var id: String { rawValue }
+}
+
+private enum WindowCommand: String, CaseIterable, Identifiable {
+    case bringForward = "Активировать окно"
+    case minimize = "Свернуть окно"
+    case fullScreen = "Переключить полноэкранный режим"
+    case keyboard = "Нажать клавиши"
+
+    var id: String { rawValue }
+}
+
+private struct KeyboardKey: Identifiable {
+    let name: String
+    let id: CGKeyCode
+    static let options = [
+        Self(name: "Enter", id: 36), Self(name: "Tab", id: 48), Self(name: "Escape", id: 53),
+        Self(name: "Пробел", id: 49), Self(name: "Backspace", id: 51),
+        Self(name: "←", id: 123), Self(name: "→", id: 124), Self(name: "↓", id: 125), Self(name: "↑", id: 126),
+        Self(name: "A", id: 0), Self(name: "C", id: 8), Self(name: "F", id: 3), Self(name: "N", id: 45),
+        Self(name: "O", id: 31), Self(name: "S", id: 1), Self(name: "V", id: 9),
+        Self(name: "W", id: 13), Self(name: "X", id: 7), Self(name: "Z", id: 6)
+    ]
+}
+
+private struct WindowCommandProposal: Identifiable {
+    let id = UUID()
+    let command: WindowCommand
+    let windowID: UUID
+    let pid: pid_t
+    let key: CGKeyCode
+    let flags: CGEventFlags
+    let detail: String
+}
+
 private struct AssistantChoice: Decodable {
     let action: String
     let id: Int
@@ -99,7 +139,6 @@ private final class NoDesktopRedirect: NSObject, URLSessionTaskDelegate {
 }
 
 private func askOllama(task: String, controls: [WindowControl]) async throws -> AssistantChoice {
-    let url = URL(string: "http://127.0.0.1:11434/api/chat")!
     let candidates: [[String: Any]] = controls.map { control in
         ["id": control.id, "role": control.role, "label": control.label,
          "actions": [(control.press ? "press" : nil), (control.write ? "write" : nil)].compactMap { $0 }]
@@ -128,6 +167,11 @@ private func askOllama(task: String, controls: [WindowControl]) async throws -> 
             ["role":"user", "content":String(decoding: data, as: UTF8.self)]
         ]
     ]
+    return try await requestDesktopOllama(payload, as: AssistantChoice.self)
+}
+
+func requestDesktopOllama<T: Decodable>(_ payload: [String: Any], as choice: T.Type) async throws -> T {
+    let url = URL(string: "http://127.0.0.1:11434/api/chat")!
     var request = URLRequest(url: url, timeoutInterval: 80)
     request.httpMethod = "POST"
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -141,11 +185,12 @@ private func askOllama(task: String, controls: [WindowControl]) async throws -> 
         throw DesktopFailure("Ollama не приняла запрос. Проверьте, доступна ли gemma4:12b-backup.")
     }
     let message = try JSONDecoder().decode(LocalResponse.self, from: response).message.content
-    return try JSONDecoder().decode(AssistantChoice.self, from: Data(message.utf8))
+    return try JSONDecoder().decode(choice, from: Data(message.utf8))
 }
 
 @MainActor
 private final class DesktopModel: ObservableObject {
+    @Published var section = DesktopSection.windows
     @Published var applications: [NSRunningApplication] = []
     @Published var pid: pid_t = 0
     @Published var windows: [WindowTarget] = []
@@ -156,12 +201,30 @@ private final class DesktopModel: ObservableObject {
     @Published var manualText = ""
     @Published var status = "Выберите приложение и окно."
     @Published var proposal: Proposal?
+    @Published var windowProposal: WindowCommandProposal?
     @Published var pending: Task<Void,Never>?
     @Published var operation = UUID()
     @Published var screenshot: NSImage?
     @Published var screenshotData: Data?
     @Published var activity: [String] = []
     @Published var trusted = AXIsProcessTrusted()
+
+    @Published var keyCode: CGKeyCode = 36
+    @Published var commandKey = false
+    @Published var optionKey = false
+    @Published var controlKey = false
+    @Published var shiftKey = false
+
+    var modifiers: CGEventFlags {
+        var result: CGEventFlags = []
+        if commandKey { result.insert(.maskCommand) }
+        if optionKey { result.insert(.maskAlternate) }
+        if controlKey { result.insert(.maskControl) }
+        if shiftKey { result.insert(.maskShift) }
+        return result
+    }
+
+    var key: KeyboardKey { KeyboardKey.options.first { $0.id == keyCode } ?? KeyboardKey.options[0] }
 
     var selectedApp: NSRunningApplication? { applications.first { $0.processIdentifier == pid } }
     var selectedWindow: WindowTarget? { windows.first { $0.id == windowID } }
@@ -188,6 +251,7 @@ private final class DesktopModel: ObservableObject {
         pending?.cancel()
         pending = nil
         proposal = nil
+        windowProposal = nil
         if wasRunning { status = "Операция остановлена." }
     }
 
@@ -328,6 +392,83 @@ private final class DesktopModel: ObservableObject {
         }
     }
 
+    func review(_ command: WindowCommand, key: KeyboardKey, flags: CGEventFlags) {
+        guard pending == nil, let window = selectedWindow, let app = selectedApp else { return }
+        let modifiers: [(CGEventFlags, String)] = [(.maskControl, "⌃"), (.maskAlternate, "⌥"),
+                                                   (.maskShift, "⇧"), (.maskCommand, "⌘")]
+        let keys = modifiers.filter { flags.contains($0.0) }.map { $0.1 }.joined() + key.name
+        let appName = app.localizedName ?? "Приложение"
+        windowProposal = WindowCommandProposal(command: command, windowID: window.id,
+            pid: app.processIdentifier, key: key.id, flags: flags,
+            detail: "\(appName) · \(window.title)" + (command == .keyboard ? "\n\(keys)" : ""))
+    }
+
+    func execute(_ request: WindowCommandProposal, panel: NSWindow?) {
+        guard AXIsProcessTrusted(), let window = selectedWindow, window.id == request.windowID,
+              let app = selectedApp, app.processIdentifier == request.pid,
+              attribute(window.element, kAXRoleAttribute) != nil, !app.isTerminated else {
+            status = "Выбранное окно больше недоступно."; return
+        }
+        switch request.command {
+        case .minimize, .fullScreen:
+            let attributeName = request.command == .minimize ? kAXMinimizedAttribute : "AXFullScreen"
+            let current = attribute(window.element, attributeName) as? Bool ?? false
+            let value = request.command == .minimize || !current
+            let result = AXUIElementSetAttributeValue(window.element, attributeName as CFString,
+                                                      value ? kCFBooleanTrue : kCFBooleanFalse)
+            status = result == .success ? "Состояние окна изменено." : "Окно отклонило это действие."
+        case .bringForward, .keyboard:
+            if request.command == .keyboard, !CGPreflightPostEventAccess() {
+                _ = CGRequestPostEventAccess()
+                status = "Разрешите управление вводом в разделе «Универсальный доступ»."
+                return
+            }
+            panel?.orderOut(nil)
+            app.activate()
+            AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+            let revision = operation
+            pending = Task {
+                defer { if operation == revision { pending = nil } }
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard operation == revision,
+                      NSWorkspace.shared.frontmostApplication?.processIdentifier == request.pid,
+                      let focused = asElement(attribute(AXUIElementCreateApplication(request.pid), kAXFocusedWindowAttribute)),
+                      CFEqual(focused, window.element) else {
+                    status = "Не удалось активировать выбранное окно."
+                    panel?.makeKeyAndOrderFront(nil)
+                    return
+                }
+                if request.command == .keyboard {
+                    guard let down = CGEvent(keyboardEventSource: nil, virtualKey: request.key, keyDown: true),
+                          let up = CGEvent(keyboardEventSource: nil, virtualKey: request.key, keyDown: false)
+                    else { panel?.makeKeyAndOrderFront(nil); return }
+                    down.flags = request.flags
+                    up.flags = request.flags
+                    down.postToPid(request.pid)
+                    up.postToPid(request.pid)
+                    status = "Клавиши отправлены в выбранное окно."
+                } else {
+                    status = "Выбранное окно активно."
+                }
+            }
+        }
+    }
+
+    func launchApplication() {
+        let chooser = NSOpenPanel()
+        chooser.allowedContentTypes = [.applicationBundle]
+        chooser.directoryURL = URL(fileURLWithPath: "/Applications")
+        chooser.begin { [weak self] result in
+            guard result == .OK, let url = chooser.url else { return }
+            NSWorkspace.shared.openApplication(at: url, configuration: .init()) { _, error in
+                Task { @MainActor in
+                    self?.loadApplications()
+                    self?.status = error == nil ? "Приложение открыто." : "macOS не открыла приложение."
+                }
+            }
+        }
+    }
+
     func capture() {
         guard let window = selectedWindow, let app = selectedApp else { return }
         guard CGPreflightScreenCaptureAccess() else {
@@ -385,13 +526,32 @@ private final class DesktopModel: ObservableObject {
 
 @MainActor
 struct DesktopView: View {
-    @ObservedObject private var model = DesktopModel()
+    @StateObject private var model = DesktopModel()
     var sendCapture: (Data) -> Void
-
+    var panel: () -> NSWindow?
     var body: some View {
+        VStack(spacing: 0) {
+            Picker("Раздел управления", selection: $model.section) {
+                ForEach(DesktopSection.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
+            switch model.section {
+            case .windows: windowPane
+            case .screen: DesktopScreenPane(panel: panel, sendCapture: sendCapture)
+            case .audio: DesktopAudioPane()
+            }
+        }
+        .onDisappear { model.stop() }
+        .onChange(of: model.section) { _, _ in model.stop() }
+    }
+
+    private var windowPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 15) {
-                Text("Управление окном").font(.largeTitle.weight(.semibold))
+                Text("Окна и клавиатура").font(.title.weight(.semibold))
                 Text("Gemma предлагает одно действие по элементам окна. Проверьте цель перед выполнением.")
                     .foregroundStyle(.secondary)
                 if !model.trusted {
@@ -405,6 +565,7 @@ struct DesktopView: View {
                         }
                     }
                     Button("Обновить список", action: model.loadApplications)
+                    Button("Открыть приложение…", action: model.launchApplication)
                 }
                 if !model.windows.isEmpty {
                     Picker("Окно", selection: $model.windowID) {
@@ -418,6 +579,27 @@ struct DesktopView: View {
                     Button("Снимок окна", action: model.capture)
                         .disabled(model.selectedWindow == nil || model.pending != nil)
                     if model.pending != nil { Button("Остановить", action: model.stop) }
+                }
+                if model.selectedWindow != nil {
+                    DisclosureGroup("Окно и клавиши") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                ForEach(WindowCommand.allCases.filter { $0 != .keyboard }) { command in
+                                    Button(command.rawValue) { model.review(command, key: model.key, flags: []) }
+                                }
+                            }
+                            HStack {
+                                Picker("Клавиша", selection: $model.keyCode) {
+                                    ForEach(KeyboardKey.options) { Text($0.name).tag($0.id) }
+                                }
+                                Toggle("⌘", isOn: $model.commandKey).accessibilityLabel("Command")
+                                Toggle("⌥", isOn: $model.optionKey).accessibilityLabel("Option")
+                                Toggle("⌃", isOn: $model.controlKey).accessibilityLabel("Control")
+                                Toggle("⇧", isOn: $model.shiftKey).accessibilityLabel("Shift")
+                                Button("Проверить клавиши") { model.review(.keyboard, key: model.key, flags: model.modifiers) }
+                            }
+                        }.padding(.vertical, 8).disabled(model.pending != nil)
+                    }
                 }
                 if !model.controls.isEmpty {
                     TextField("Задача для Gemma, например «Нажми Новая заметка»", text: $model.task)
@@ -485,7 +667,11 @@ struct DesktopView: View {
             }.frame(maxWidth: 640, alignment: .leading).padding(24)
         }
         .onAppear { model.loadApplications() }
-        .onDisappear { model.stop() }
+        .alert(item: $model.windowProposal) { request in
+            Alert(title: Text(request.command.rawValue), message: Text(request.detail),
+                  primaryButton: .default(Text("Выполнить")) { model.execute(request, panel: panel()) },
+                  secondaryButton: .cancel(Text("Отмена")))
+        }
         .onChange(of: model.pid) { _, _ in model.loadWindows() }
         .onChange(of: model.windowID) { _, _ in model.clearWindowContent() }
     }

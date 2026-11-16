@@ -28,7 +28,7 @@ fi
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 arch="$(uname -m)"
 swiftc -O -sdk "$sdk" -target "$arch-apple-macosx14.0" \
-  macos/Main.swift macos/Desktop.swift -o "$app/Contents/MacOS/LocalChat"
+  macos/Main.swift macos/Desktop.swift macos/DesktopTools.swift -o "$app/Contents/MacOS/LocalChat"
 swiftc macos/Icon.swift -o "$stage/icon-generator"
 "$stage/icon-generator" "$stage/LocalChat.iconset"
 iconutil -c icns "$stage/LocalChat.iconset" -o "$app/Contents/Resources/LocalChat.icns"

@@ -89,7 +89,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
 
         let desktop = NSMenuItem()
         desktop.submenu = NSMenu(title: "Экран")
-        let item = desktop.submenu!.addItem(withTitle: "Управление окном", action: #selector(openDesktop), keyEquivalent: "d")
+        let item = desktop.submenu!.addItem(withTitle: "Управление Mac", action: #selector(openDesktop), keyEquivalent: "d")
         item.keyEquivalentModifierMask = [.command, .shift]
         item.target = self
         bar.addItem(desktop)
@@ -178,7 +178,7 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
 
     private func showChat() {
         let root = NSView()
-        let control = NSButton(title: "Управление окном", target: self, action: #selector(openDesktop))
+        let control = NSButton(title: "Управление Mac", target: self, action: #selector(openDesktop))
         control.bezelStyle = .rounded
         let heading = NSTextField(labelWithString: "mafokenLLM")
         heading.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -273,13 +273,13 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         if let desktopWindow { desktopWindow.makeKeyAndOrderFront(nil); return }
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 680),
                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.title = "mafokenLLM · Управление окном"
+        panel.title = "mafokenLLM · Управление Mac"
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.minSize = NSSize(width: 600, height: 540)
-        panel.contentViewController = NSHostingController(rootView: DesktopView { [weak self] jpeg in
+        panel.contentViewController = NSHostingController(rootView: DesktopView(sendCapture: { [weak self] jpeg in
             self?.attachCapture(jpeg)
-        })
+        }, panel: { [weak panel] in panel }))
         panel.center()
         desktopWindow = panel
         panel.makeKeyAndOrderFront(nil)

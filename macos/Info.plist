@@ -13,7 +13,7 @@
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>mafokenLLM записывает голос для распознавания речи на этом Mac.</string>
-  <key>NSScreenCaptureUsageDescription</key><string>mafokenLLM делает снимок выбранного окна, когда вы нажимаете «Снимок окна».</string>
+  <key>NSScreenCaptureUsageDescription</key><string>mafokenLLM делает снимок выбранного окна или дисплея по вашему запросу.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
 </plist>

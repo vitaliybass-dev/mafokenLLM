@@ -166,7 +166,9 @@
       <select id="providerNetwork"><option value="">Системный маршрут</option><option value="wifi">Напрямую через Wi-Fi · вне VPN</option></select>
     </label>
     <label>Идентификатор модели <input id="cloudModel" placeholder="Как в кабинете провайдера"></label>
-    <label>Ключ API <input type="password" id="key" autocomplete="off" placeholder="Действует до закрытия или перезагрузки вкладки"></label>
+    <label>Ключ API <input type="password" id="key" autocomplete="off" placeholder="Введите ключ провайдера" aria-describedby="keychainHint"></label>
+    <small id="keychainHint" role="status"></small>
+    <button type="button" id="forgetKey" hidden>Удалить сохранённый ключ</button>
     <label>Метка API аккаунта или проекта <input id="billingLabel" maxlength="64" placeholder="Например, личный проект или команда"></label>
     <button type="button" id="fetchCatalog">Загрузить модели провайдера</button>
     <p id="catalogStatus" role="status"></p>

@@ -18,6 +18,25 @@ let chats = read("localchat.chats", []);
 let active = chats.find(c => c.id === read("localchat.active", null));
 let installed = [], modelsLoading = true, busy = false, editing = "", apiKeys = new Map(), controller = null;
 let catalogRevision = 0;
+const apiKeyBridge = globalThis.webkit?.messageHandlers?.mafokenAPIKey;
+let savedKeysReady = Promise.resolve();
+let loadingAPIKeys = false, savingProfile = false, keyEdited = false;
+
+async function restoreAPIKeys() {
+  if (!apiKeyBridge) return;
+  loadingAPIKeys = true;
+  const results = await Promise.allSettled(Object.keys(presets).map(async profile => {
+    const endpoint = settings.providers[profile]?.endpoint;
+    if (!endpoint) return;
+    const key = await apiKeyBridge.postMessage({action:"load",profile,endpoint});
+    if (key) apiKeys.set(profile,key);
+  }));
+  loadingAPIKeys = false;
+  sync();
+  if (results.some(result=>result.status==="rejected")) {
+    notice("Не удалось загрузить некоторые ключи из Связки ключей macOS.");
+  }
+}
 const transientUploads = new WeakMap();
 const efforts = {
   brief:"Отвечай кратко, сразу по делу. Дай только необходимые детали.",
@@ -93,6 +112,7 @@ function sync() {
   $("mic").disabled = !voice && (!voiceReady || lock || !navigator.mediaDevices || !window.MediaRecorder);
   $("stop").hidden = !busy;
   $("send").hidden = busy;
+  if (loadingAPIKeys && effectiveMode !== "local" && active.allow) $("send").disabled = true;
   for (const button of $("chats").children) button.disabled = lock;
   status();
 }
@@ -263,6 +283,11 @@ function collect() {
 }
 function showProvider(preset) {
   editing = preset;
+  keyEdited = false;
+  $("keychainHint").textContent = apiKeyBridge
+    ? "Ключ сохраняется в Связке ключей macOS."
+    : "В браузере ключ действует до закрытия или перезагрузки вкладки.";
+  $("forgetKey").hidden = !apiKeyBridge;
   resetCatalog();
   const p = settings.providers[preset] || fresh(preset);
   for (const [id,v] of Object.entries({kind:p.kind,endpoint:p.endpoint,cloudModel:p.model,
@@ -282,7 +307,17 @@ function resetCatalog() {
   $("cloudCatalog").replaceChildren();
 }
 $("kind").onchange = () => {formatFields(); resetCatalog();};
-$("key").oninput = resetCatalog;
+$("key").oninput = () => {
+  keyEdited = true;
+  if (apiKeyBridge) $("keychainHint").textContent = "Ключ сохраняется в Связке ключей macOS.";
+  resetCatalog();
+};
+$("forgetKey").onclick = () => {
+  $("key").value = "";
+  keyEdited = true;
+  $("keychainHint").textContent = "Ключ будет удалён из Связки ключей после нажатия «Готово».";
+  resetCatalog();
+};
 $("providerNetwork").onchange = resetCatalog;
 $("fetchCatalog").onclick = async () => {
   const {endpoint,kind,network} = collect();
@@ -326,7 +361,7 @@ $("cloudModel").oninput = () => {
     ? $("cloudModel").value : "";
 };
 async function openModelSettings(preset = settings.preset) {
-  await loadModels();
+  await Promise.all([loadModels(),savedKeysReady]);
   if (busy || $("dialog").open) return;
   $("localModel").replaceChildren(...(installed.length ? installed : [settings.local]).map(m => new Option(m,m)));
   $("localModel").value = settings.local;
@@ -336,27 +371,57 @@ async function openModelSettings(preset = settings.preset) {
 }
 $("settings").onclick = () => openModelSettings();
 $("preset").onchange = () => showProvider($("preset").value);
-$("close").onclick = () => $("dialog").close();
+$("close").onclick = () => { if (!savingProfile) $("dialog").close(); };
+$("dialog").oncancel = event => { if (savingProfile) event.preventDefault(); };
 $("dialog").onclose = () => { $("key").value = ""; resetCatalog(); };
-$("config").onsubmit = event => {
+$("config").onsubmit = async event => {
   event.preventDefault();
+  if (savingProfile) return;
   const provider = collect();
   if (provider.endpoint && !provider.endpoint.startsWith("https://")) {
     $("endpoint").setCustomValidity("Адрес должен начинаться с https://");
     $("endpoint").reportValidity();
     return;
   }
-  const oldProfile = settings.providers[editing], oldKey = apiKeys.get(editing);
-  apiKeys.set(editing,$("key").value.trim());
-  settings.providers[editing] = provider;
-  settings.preset = editing;
+  const profile = editing, oldProfile = settings.providers[profile], oldKey = apiKeys.get(profile);
+  const key = $("key").value.trim();
+  if (apiKeyBridge && (keyEdited || (key && key !== oldKey))) {
+    // Freeze the draft while Keychain may be waiting for a macOS prompt.
+    savingProfile = true;
+    const controls = [...$("config").elements].filter(control=>!control.disabled);
+    for (const control of controls) control.disabled = true;
+    $("keychainHint").textContent = "Сохраняем изменения в Связке ключей…";
+    try {
+      await apiKeyBridge.postMessage({action:key ? "save" : "remove",profile,endpoint:provider.endpoint,key});
+    } catch (error) {
+      $("keychainHint").textContent = error.message || "Не удалось изменить ключ в Связке ключей macOS.";
+      return;
+    } finally {
+      for (const control of controls) control.disabled = false;
+      savingProfile = false;
+    }
+  }
+  if (key) apiKeys.set(profile,key);
+  else apiKeys.delete(profile);
+  settings.providers[profile] = provider;
+  settings.preset = profile;
   settings.local = $("localModel").value;
-  connectionChanged(editing,oldProfile,oldKey);
+  connectionChanged(profile,oldProfile,oldKey);
   save();
   sync();
   $("dialog").close();
 };
-$("endpoint").oninput = () => { $("endpoint").setCustomValidity(""); resetCatalog(); };
+$("endpoint").oninput = () => {
+  $("endpoint").setCustomValidity("");
+  const previous = settings.providers[editing]?.endpoint;
+  // A filled key belongs to its previous endpoint and must not be forwarded to a new one.
+  if (previous !== $("endpoint").value.trim() && $("key").value.trim() === apiKeys.get(editing)) {
+    $("key").value = "";
+    keyEdited = false;
+    if (apiKeyBridge) $("keychainHint").textContent = "Введите ключ для нового адреса API.";
+  }
+  resetCatalog();
+};
 $("mode").onchange = () => {
   clearNotice();
   active.mode = $("mode").value;
@@ -401,6 +466,10 @@ async function generate(replace, savedFiles) {
   if (busy || taskBusy || draftLoading || voice) return;
   clearNotice();
   const target=currentTarget();
+  if (loadingAPIKeys && target.mode !== "local" && active.allow) {
+    notice("Загружаем сохранённые ключи API из Связки ключей.");
+    return;
+  }
   const {profileId,provider}=target, key=apiKeys.get(profileId);
   const attachments = savedFiles || pending;
   if (replace===undefined && !(input || attachments.length)) return;
@@ -502,5 +571,6 @@ setupConnections();
 setupNextPicker();
 setupChatGPT();
 if (!active) newChat(); else selectChat(active);
+savedKeysReady = restoreAPIKeys();
 loadModels();
 refreshChatGPT();

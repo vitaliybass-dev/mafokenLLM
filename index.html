@@ -7,6 +7,7 @@
 <script defer src="/workspace.js"></script>
 <script defer src="/connections.js"></script>
 <script defer src="/accounts.js"></script>
+<script defer src="/spending.js"></script>
 <script defer src="/app.js"></script>
 <body>
 <div class="workspace">
@@ -17,6 +18,7 @@
     <div class="duo"><select id="projectFilter" aria-label="Фильтр проектов"></select><button id="projects" title="Управление проектами" aria-label="Управление проектами">✎</button></div>
     <div class="eyebrow">ДИАЛОГИ</div><nav id="chats" aria-label="Диалоги"></nav>
     <label class="archive"><input id="showArchive" type="checkbox"> Архив</label>
+    <button id="spending">Расходы</button>
     <button id="prefs">Память и профиль</button>
     <button id="connections">Аккаунты и API</button>
     <button id="settings">⚙ Модели и сервисы</button>
@@ -76,7 +78,8 @@
     <div class="canvas-toolbar"><strong>Редактор</strong><button id="canvasClose" aria-label="Закрыть редактор">×</button></div>
     <label>Имя файла <input id="canvasName" maxlength="100" placeholder="заметки.md"></label>
     <textarea id="canvasText" spellcheck="false" maxlength="150000" aria-label="Текст редактора" placeholder="Откройте сюда ответ ассистента или создайте свой текст."></textarea>
-    <div class="toolstrip"><button id="canvasAttach">Добавить в запрос</button><button id="canvasPreview">Показать diff</button><button id="canvasDownload">Скачать</button><button id="canvasUndo" hidden>Вернуть предыдущий текст</button></div>
+    <div class="toolstrip"><button id="canvasAttach">Добавить в запрос</button><button id="canvasPreview">Показать diff</button><button id="checkPatch">Проверить патч…</button><button id="canvasDownload">Скачать</button><button id="canvasUndo" hidden>Вернуть предыдущий текст</button></div>
+    <pre id="patchResult" role="status" hidden></pre>
     <pre id="diffPreview" aria-label="Просмотр изменений" hidden></pre>
   </section>
 </div>
@@ -131,11 +134,16 @@
     </details>
   </section>
   <h3>API по ключу · доступ и баланс</h3>
-  <p class="connection-caption">Используется аккаунт или проект, которому принадлежит ключ. Проверка не запускает генерацию.</p>
+  <p class="connection-caption">Используется аккаунт или проект, которому принадлежит ключ. Проверка каталога бесплатна. Для проверки ответа можно отдельно отправить короткий запрос.</p>
   <div id="connectionList" aria-live="polite"></div>
   <div class="buttons">
     <button id="refreshConnections" type="button">Проверить подключения</button>
   </div>
+</dialog>
+<dialog id="spendingDialog" aria-labelledby="spendingTitle"><div class="connections-heading"><h2 id="spendingTitle">Расходы</h2><button id="spendingClose" aria-label="Закрыть">×</button></div>
+  <label>Период <select id="spendingPeriod"><option value="day">Сегодня</option><option value="month">Этот месяц</option></select></label>
+  <small>Учитываются запросы из чата на Mac и проверки генерации с момента обновления. День определяется по времени Mac.</small>
+  <p id="spendingTotal"></p><div id="spendingRows"></div>
 </dialog>
 <dialog id="balanceDialog" aria-labelledby="balanceTitle">
   <form id="balanceForm" autocomplete="off">
@@ -174,11 +182,17 @@
     <p id="catalogStatus" role="status"></p>
     <label id="catalogField" hidden>Модели из каталога <select id="cloudCatalog"></select></label>
     <label>Лимит токенов на ответ <input type="number" id="maxTokens" min="128" max="32768" step="1" required></label>
+    <details><summary>Тариф модели для оценки расходов</summary>
+      <small>USD за миллион токенов для указанной модели. Пустое поле означает неизвестный тариф.</small>
+      <label>Вход <input type="number" id="inputPrice" min="0" step="any"></label>
+      <label>Выход <input type="number" id="outputPrice" min="0" step="any"></label>
+    </details>
     <label>Параметр лимита для Chat Completions
       <select id="limitField"><option value="max_completion_tokens">max_completion_tokens</option><option value="max_tokens">max_tokens</option></select>
     </label>
     <label class="inline"><input type="checkbox" id="usage"> Запрашивать счётчик токенов в потоке Chat Completions</label>
-    <div class="buttons"><button type="button" id="close">Закрыть</button><button type="submit" class="primary">Готово</button></div>
+    <small id="profileStatus" role="status"></small>
+    <div class="buttons wrap"><button type="button" id="close">Закрыть</button><button type="submit" class="primary">Сохранить профиль</button><button type="submit" id="makeDefault">Сохранить и выбрать по умолчанию</button></div>
   </form>
 </dialog>
 <dialog id="actionDialog" aria-labelledby="actionTitle" aria-describedby="actionDetail">
@@ -209,7 +223,8 @@
     <label>Название <input id="projectName" maxlength="80" required autofocus></label>
     <label>Инструкции для чатов проекта <textarea id="projectInstructions" rows="4" maxlength="5000"></textarea></label>
     <div id="projectFiles"></div>
-    <div class="toolstrip"><button id="projectAttach" type="button">Добавить материалы</button><button id="projectFolder" type="button">Выбрать папку кода</button></div>
+    <div class="toolstrip"><button id="projectAttach" type="button">Добавить материалы</button><button id="projectFolder" type="button">Выбрать папку кода</button><button id="refreshProject" type="button">Обновить файлы проекта…</button></div>
+    <input id="refreshFolderUpload" type="file" webkitdirectory multiple hidden>
     <input id="folderUpload" type="file" webkitdirectory multiple hidden>
     <div id="folderList" aria-label="Файлы выбранной папки"></div>
     <input id="projectUpload" type="file" multiple hidden>

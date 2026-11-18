@@ -15,9 +15,19 @@ function read(name, fallback) {
 const saved = read("localchat.config", {});
 let settings = {preset:"openai",local:"gemma4:12b-backup",providers:{},balanceSnapshots:{},...saved};
 let chats = read("localchat.chats", []);
+for (const chat of chats) {
+  for (const message of chat.messages || []) {
+    if (message.inProgress) {
+      delete message.inProgress;
+      message.error = "Ответ прерван перезагрузкой. Можно повторить запрос.";
+    }
+  }
+}
 let active = chats.find(c => c.id === read("localchat.active", null));
 let installed = [], modelsLoading = true, busy = false, editing = "", apiKeys = new Map(), controller = null;
 let catalogRevision = 0;
+const profileDrafts = new Map();
+const settingsCatalogs = new Map();
 const apiKeyBridge = globalThis.webkit?.messageHandlers?.mafokenAPIKey;
 let savedKeysReady = Promise.resolve();
 let loadingAPIKeys = false, savingProfile = false, keyEdited = false;
@@ -54,10 +64,11 @@ const el = (tag, text, css) => {
 function save() {
   try {
     localStorage.setItem("localchat.config", JSON.stringify(settings));
-    localStorage.setItem("localchat.chats", JSON.stringify(chats));
     localStorage.setItem("localchat.projects", JSON.stringify(projects));
     if (!active.temp) localStorage.setItem("localchat.active", JSON.stringify(active.id));
-  } catch { storageWarning("Изменения не сохранены на диск. Скопируйте важный текст перед закрытием."); }
+    localStorage.setItem("localchat.chats", JSON.stringify(chats));
+    return true;
+  } catch { storageWarning("Изменения не сохранены на диск. Скопируйте важный текст перед закрытием."); return false; }
 }
 function newChat(temp = false) {
   const chat = {id:crypto.randomUUID(),title:temp ? "Временный чат" : "Новый чат",
@@ -74,15 +85,21 @@ function selectChat(chat, composer = null) {
   render();
   $("draft").focus();
 }
-function forkChat(index, edit = false) {
+async function forkChat(index, edit = false) {
   if (busy || taskBusy || draftLoading || voice) return;
   const original = active;
   const branch = {...original,id:crypto.randomUUID(),title:"Ветка: "+original.title,
     messages:structuredClone(original.messages.slice(0,index + (edit ? 0 : 1))),
     pinned:false,archived:false,cloudCalls:0,canvas:undefined,canvasPrevious:undefined};
+  let files = [];
+  if (edit) {
+    try { files = await messageFiles(original.messages[index]) || []; }
+    catch { notice("Не удалось прочитать вложения. Повторите позже."); return; }
+    if (original !== active || busy) return;
+  }
   if (!branch.temp) chats.unshift(branch);
   const composer = edit ? {text:original.messages[index].content,
-    files:[...(transientUploads.get(original.messages[index]) || [])]} : null;
+    files:[...files]} : null;
   selectChat(branch, composer);
 }
 function status() {
@@ -210,7 +227,7 @@ function messageNode(message) {
   node.append(meta,resource,fallback,content,error);
   function update(parsed = false) {
     label.textContent=message.role==="user" ? "Вы"+(message.files?.length ? " · "+message.files.join(", ") : "") :
-      (message.model ? message.source+" · "+message.model : message.status || "Ожидаем ответ…");
+      (message.model ? message.source+" · "+message.model : message.error ? "Ответ прерван" : message.status || "Ожидаем ответ…");
     const kind=message.resource || (message.cloud===false ? "local" : message.cloud===true ? "cloud" : "");
     const confirmed=!!message.content;
     const names={local:"Этот Mac · Ollama",api:"Баланс / квота API",plan:"Лимит тарифа ChatGPT",cloud:"Облако · старый ответ"};
@@ -277,21 +294,25 @@ async function loadModels() {
 function collect() {
   return {
     name:presets[editing].name,network:editing==="custom" ? $("providerNetwork").value : "",kind:$("kind").value,endpoint:$("endpoint").value.trim(),
+    inputPrice:$("inputPrice").value,outputPrice:$("outputPrice").value,priceModel:$("cloudModel").value.trim(),
     model:$("cloudModel").value.trim(),billingLabel:$("billingLabel").value.trim(),maxTokens:Number($("maxTokens").value),
     limitField:$("limitField").value,usage:$("usage").checked
   };
 }
 function showProvider(preset) {
   editing = preset;
-  keyEdited = false;
+  const draft=profileDrafts.get(preset);
+  keyEdited = draft?.keyEdited || false;
+  $("profileStatus").textContent=preset===settings.preset ? "Профиль по умолчанию" : "";
+  $("makeDefault").hidden=preset===settings.preset;
   $("keychainHint").textContent = apiKeyBridge
     ? "Ключ сохраняется в Связке ключей macOS."
     : "В браузере ключ действует до закрытия или перезагрузки вкладки.";
   $("forgetKey").hidden = !apiKeyBridge;
   resetCatalog();
-  const p = settings.providers[preset] || fresh(preset);
+  const p = draft?.profile || settings.providers[preset] || fresh(preset);
   for (const [id,v] of Object.entries({kind:p.kind,endpoint:p.endpoint,cloudModel:p.model,
-    billingLabel:p.billingLabel || "",providerNetwork:p.network || "",maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:apiKeys.get(preset) || ""})) $(id).value = v;
+    billingLabel:p.billingLabel || "",providerNetwork:p.network || "",inputPrice:p.inputPrice ?? "",outputPrice:p.outputPrice ?? "",maxTokens:p.maxTokens,limitField:p.limitField || "max_tokens",key:draft?.key ?? apiKeys.get(preset) ?? ""})) $(id).value = v;
   $("usage").checked = p.usage === true;
   formatFields();
 }
@@ -315,7 +336,7 @@ $("key").oninput = () => {
 $("forgetKey").onclick = () => {
   $("key").value = "";
   keyEdited = true;
-  $("keychainHint").textContent = "Ключ будет удалён из Связки ключей после нажатия «Готово».";
+  $("keychainHint").textContent = "Ключ будет удалён из Связки ключей после сохранения профиля.";
   resetCatalog();
 };
 $("providerNetwork").onchange = resetCatalog;
@@ -339,6 +360,7 @@ $("fetchCatalog").onclick = async () => {
         ? " Если этот адрес не работает через VPN, проверьте сеть «Напрямую через Wi-Fi»." : "");
       return;
     }
+    settingsCatalogs.set(editing,{endpoint,kind,network,key,result});
     const ids = result.models;
     $("catalogStatus").textContent = ids.length
       ? "Моделей в каталоге: " + ids.length + (result.partial ? " · показаны первые страницы." : ".")
@@ -354,9 +376,12 @@ $("fetchCatalog").onclick = async () => {
   }
 };
 $("cloudCatalog").onchange = () => {
-  if ($("cloudCatalog").value) $("cloudModel").value = $("cloudCatalog").value;
+  if ($("cloudCatalog").value) { $("cloudModel").value = $("cloudCatalog").value; $("cloudModel").oninput(); }
 };
 $("cloudModel").oninput = () => {
+  if ($("cloudModel").value.trim() !== settings.providers[editing]?.priceModel) {
+    $("inputPrice").value = ""; $("outputPrice").value = "";
+  }
   $("cloudCatalog").value = [...$("cloudCatalog").options].some(o => o.value === $("cloudModel").value)
     ? $("cloudModel").value : "";
 };
@@ -370,10 +395,13 @@ async function openModelSettings(preset = settings.preset) {
   $("dialog").showModal();
 }
 $("settings").onclick = () => openModelSettings();
-$("preset").onchange = () => showProvider($("preset").value);
+$("preset").onchange = () => {
+  profileDrafts.set(editing,{profile:collect(),key:$("key").value,keyEdited});
+  showProvider($("preset").value);
+};
 $("close").onclick = () => { if (!savingProfile) $("dialog").close(); };
 $("dialog").oncancel = event => { if (savingProfile) event.preventDefault(); };
-$("dialog").onclose = () => { $("key").value = ""; resetCatalog(); };
+$("dialog").onclose = () => { profileDrafts.clear(); settingsCatalogs.clear(); $("key").value = ""; resetCatalog(); };
 $("config").onsubmit = async event => {
   event.preventDefault();
   if (savingProfile) return;
@@ -385,6 +413,10 @@ $("config").onsubmit = async event => {
   }
   const profile = editing, oldProfile = settings.providers[profile], oldKey = apiKeys.get(profile);
   const key = $("key").value.trim();
+  if (event.submitter?.id==="makeDefault" && !(key && provider.endpoint && provider.model)) {
+    $("profileStatus").textContent="Чтобы выбрать API по умолчанию, укажите адрес, модель и ключ.";
+    return;
+  }
   if (apiKeyBridge && (keyEdited || (key && key !== oldKey))) {
     // Freeze the draft while Keychain may be waiting for a macOS prompt.
     savingProfile = true;
@@ -404,9 +436,14 @@ $("config").onsubmit = async event => {
   if (key) apiKeys.set(profile,key);
   else apiKeys.delete(profile);
   settings.providers[profile] = provider;
-  settings.preset = profile;
+  if (event.submitter?.id==="makeDefault") settings.preset = profile;
   settings.local = $("localModel").value;
   connectionChanged(profile,oldProfile,oldKey);
+  const catalog=settingsCatalogs.get(profile);
+  if (catalog && catalog.key===key && catalog.endpoint===provider.endpoint && catalog.kind===provider.kind && catalog.network===provider.network) {
+    rememberCatalog(profile,provider.model,catalog.result);
+    renderConnections();
+  }
   save();
   sync();
   $("dialog").close();
@@ -440,10 +477,17 @@ $("draft").onkeydown = e => {
   if (!e.isComposing && e.key === "Enter" && (e.metaKey || e.ctrlKey)) $("composer").requestSubmit();
 };
 $("composer").onsubmit = e => { e.preventDefault(); generate(); };
+async function messageFiles(message) {
+  return transientUploads.get(message) || (message.uploadId ? await readComposerFiles(message.uploadId) : null);
+}
 async function retry(index) {
+  const chat = active;
   const original = active.messages[index-1];
-  const attachments = transientUploads.get(original);
-  if (original.files?.length && !attachments) {
+  let attachments;
+  try { attachments = await messageFiles(original); }
+  catch { notice("Не удалось прочитать вложения. Повторите позже."); return; }
+  if (chat !== active || busy) return;
+  if (original.files?.length && !attachments?.length) {
     notice("Чтобы повторить с файлами, откройте сообщение в ветке и прикрепите файлы снова.");
     return;
   }
@@ -461,6 +505,27 @@ function fitHistory(before,user) {
   }
   return [...trimmed,{role:"user",content:user.content}];
 }
+async function* responsePackets(response) {
+  if (!response.ok) throw new Error((await response.json()).error || "Запрос отклонён.");
+  const reader=response.body.getReader(), decoder=new TextDecoder();
+  let buffer="";
+  try {
+    for (;;) {
+      const {done,value}=await reader.read();
+      if (done) break;
+      buffer+=decoder.decode(value,{stream:true});
+      let end;
+      while ((end=buffer.indexOf("\n"))>=0) {
+        const line=buffer.slice(0,end);
+        buffer=buffer.slice(end+1);
+        if (line.trim()) yield JSON.parse(line);
+      }
+    }
+    buffer+=decoder.decode();
+    if (buffer.trim()) yield JSON.parse(buffer);
+  } finally { reader.releaseLock(); }
+}
+
 async function generate(replace, savedFiles) {
   let input = $("draft").value.trim();
   if (busy || taskBusy || draftLoading || voice) return;
@@ -492,29 +557,50 @@ async function generate(replace, savedFiles) {
     files:attachments.map(f=>f.name)
   } : active.messages[replace-1];
   const before=replace===undefined ? active.messages.slice() : active.messages.slice(0,replace-1);
-  const answer={role:"assistant",content:""};
+  const answer={role:"assistant",content:"",inProgress:true};
+  busy=true;
+  if (replace===undefined && attachments.length && !active.temp) {
+    sync();
+    user.uploadId="sent/"+crypto.randomUUID();
+    if (!await storeComposerFiles(user.uploadId,attachments)) {
+      busy=false; sync(); return;
+    }
+  }
   if (replace===undefined) {
+    const previousTitle=active.title;
     if (!active.messages.length && !active.temp && active.title==="Новый чат") active.title=(input || user.files[0]).slice(0,48);
     if (attachments.length) transientUploads.set(user,[...attachments]);
     active.messages.push(user,answer);
+    if (!active.temp && !save()) {
+      active.messages.splice(-2);
+      active.title=previousTitle;
+      if (user.uploadId) void storeComposerFiles(user.uploadId,[]);
+      busy=false; sync(); return;
+    }
     $("draft").value="";
     saveDraftText();
     pending=[];
     showPending(true);
   } else {
     // Keep the previous answer available as a separate conversation.
-    if (!active.temp && active.messages[replace].content) {
+    const backup=!active.temp && Boolean(active.messages[replace].content);
+    if (backup) {
       chats.unshift({...active,id:crypto.randomUUID(),title:"До повтора: "+active.title,
         messages:structuredClone(active.messages),pinned:false,archived:false});
     }
-    active.messages.splice(replace,1,answer);
+    const [previous]=active.messages.splice(replace,1,answer);
+    if (!active.temp && !save()) {
+      active.messages[replace]=previous;
+      if (backup) chats.shift();
+      busy=false; sync(); return;
+    }
   }
-  busy=true;
   controller=new AbortController();
   render();
   const view=messageNode(answer);
   $("messages").lastChild.replaceWith(view.node);
-  let cloudAttempt=null, complete=false;
+  let cloudAttempt=null, usageRecord=null, complete=false;
+  let lastCheckpoint=Date.now();
   try {
     const send = plan ? accountFetch : fetch;
     const response=await send("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
@@ -522,35 +608,28 @@ async function generate(replace, savedFiles) {
         messages:fitHistory(before,user),context,images,instructions,focus:efforts[active.effort] || "",
         allowCloud:mayCloud,shareHistory:active.history,shareContext:active.shareContext,
         provider:mayCloud && !plan ? provider : undefined,key:mayCloud && !plan ? key : undefined})});
-    if (!response.ok) throw new Error((await response.json()).error || "Запрос отклонён.");
-    const reader=response.body.getReader(), decoder=new TextDecoder();
-    let buffer="";
-    while (true) {
-      const {done,value}=await reader.read(); if (done) break;
-      buffer+=decoder.decode(value,{stream:true});
-      let delimiter;
-      while ((delimiter=buffer.indexOf("\n"))>=0) {
-        const packet=JSON.parse(buffer.slice(0,delimiter)); buffer=buffer.slice(delimiter+1);
-        if (packet.delta) answer.content+=packet.delta;
-        if (packet.source) {
-          const resource=packet.cloud ? (plan ? "plan" : "api") : "local";
-          Object.assign(answer,{source:packet.source,model:packet.model,cloud:packet.cloud,resource,
-            owner:packet.cloud ? chargedAccount : ""});
-          if (packet.cloud && !cloudAttempt) {
-            cloudAttempt={resource,model:packet.model};
-            active.cloudCalls=(active.cloudCalls || 0)+1;
-            save();
-          }
+    for await (const packet of responsePackets(response)) {
+      if (packet.delta) answer.content+=packet.delta;
+      if (packet.source) {
+        const resource=packet.cloud ? (plan ? "plan" : "api") : "local";
+        usageRecord=startUsage(resource,packet.model,profileId,provider,chargedAccount);
+        Object.assign(answer,{source:packet.source,model:packet.model,cloud:packet.cloud,resource,
+          owner:packet.cloud ? chargedAccount : ""});
+        if (packet.cloud && !cloudAttempt) {
+          cloudAttempt={resource,model:packet.model};
+          active.cloudCalls=(active.cloudCalls || 0)+1;
+          save();
         }
-        if (packet.status) answer.status=packet.status;
-        if (packet.fallback) {
-          answer.fallback="API " + apiResource(provider) + " · " + chargedAccount + ": попытка была, списание неизвестно. Ответ продолжен на Mac.";
-          delete answer.usage;
-        }
-        if (packet.usage) answer.usage=packet.usage;
-        if (packet.error) answer.error=packet.error;
-        if (packet.done) complete=true;
       }
+      if (packet.status) answer.status=packet.status;
+      if (packet.fallback) {
+        answer.fallback="API " + apiResource(provider) + " · " + chargedAccount + ": попытка была, списание неизвестно. Ответ продолжен на Mac.";
+        delete answer.usage;
+      }
+      if (packet.usage) { answer.usage=packet.usage; if (usageRecord) writeUsage(usageRecord,packet.usage); }
+      if (packet.error) answer.error=packet.error;
+      if (packet.done) complete=true;
+      if (!active.temp && packet.delta && Date.now()-lastCheckpoint>=2500) { save(); lastCheckpoint=Date.now(); }
       view.update();
       bottom();
     }
@@ -561,13 +640,16 @@ async function generate(replace, savedFiles) {
     if (cloudAttempt) {
       const reply={ok:complete && !answer.error && !!answer.content && answer.resource===cloudAttempt.resource,model:cloudAttempt.model,at:Date.now()};
       if (plan) recordChatGPTReply(chargedAccount,reply);
-      else connectionReplies.set(profileId,reply);
+      else rememberReply(profileId,reply);
     }
+    delete answer.inProgress;
     busy=false; controller=null; save(); render(); $("draft").focus();
   }
 }
 bootWorkspace();
+window.addEventListener("pagehide",()=>{ if (busy && !active.temp) save(); });
 setupConnections();
+setupSpending();
 setupNextPicker();
 setupChatGPT();
 if (!active) newChat(); else selectChat(active);

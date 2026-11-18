@@ -1,4 +1,5 @@
 """Private companion for a single paired phone, behind the local Tailscale Serve proxy."""
+import math
 import base64
 import binascii
 import hmac
@@ -49,8 +50,14 @@ class Companion:
                 self.deadline = time.monotonic() + 300
             elif action == "stop":
                 self.reset()
+            elif action == "approve":
+                command = self.current_command()
+                if not command or command["id"] != body.get("id") or command.get("executing"):
+                    raise ValueError("Запрос больше не ожидает подтверждения.")
+                command["executing"] = True
+                command["until"] = time.monotonic() + 60
             elif action == "result":
-                if self.command and self.command["id"] == body.get("id"):
+                if self.current_command() and self.command["id"] == body.get("id"):
                     if self.command["kind"] == "screenshot":
                         encoded = body.get("jpeg")
                         if isinstance(encoded, str) and len(encoded) <= 1_400_000:
@@ -69,7 +76,7 @@ class Companion:
 
     def current_command(self):
         if self.command and min(self.command["until"], self.expires) <= time.monotonic():
-            self.last = {"id": self.command["id"], "message": "Истекло время подтверждения на Mac."}
+            self.last = {"id": self.command["id"], "message": ("Истекло время выполнения на Mac." if self.command.get("executing") else "Истекло время подтверждения на Mac.")}
             self.command = None
         return self.command
 
@@ -150,7 +157,9 @@ class PhoneHandler(BaseHTTPRequestHandler):
             if self.path == "/api/command":
                 self.response(200)
                 command = state.current_command()
-                self.packet(pending=command["id"] if command else None, result=state.last)
+                remaining = math.ceil(max(0, min(command["until"], state.expires) - time.monotonic())) if command else 0
+                self.packet(pending=command["id"] if command else None, remaining=remaining,
+                            executing=bool(command and command.get("executing")), result=state.last)
                 return
         if self.path == "/api/models":
             try:

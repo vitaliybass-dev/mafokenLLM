@@ -15,7 +15,7 @@ runtime="$app/Contents/Resources/Runtime"
 mkdir -p "$app/Contents/MacOS" "$runtime"
 cp macos/Info.plist "$app/Contents/Info.plist"
 cp server.py capabilities.py account_bridge.py provider_status.py chatgpt_bridge.mjs iphone.py \
-  index.html style.css app.js workspace.js accounts.js connections.js iphone.html iphone.js iphone.css "$runtime/"
+  index.html style.css app.js workspace.js spending.js accounts.js connections.js iphone.html iphone.js iphone.css "$runtime/"
 if [[ -f .siwc/sdk/packages/local/dist/index.js && -x .siwc/keychain-helper ]]; then
   mkdir -p "$runtime/.siwc/sdk/packages/local" "$runtime/.siwc/sdk/node_modules"
   cp -p .siwc/keychain-helper "$runtime/.siwc/"
@@ -28,7 +28,7 @@ fi
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 arch="$(uname -m)"
 swiftc -O -sdk "$sdk" -target "$arch-apple-macosx14.0" \
-  macos/Main.swift macos/Desktop.swift macos/DesktopTools.swift macos/APIKeyStore.swift macos/IPhoneControl.swift -o "$app/Contents/MacOS/LocalChat"
+  macos/Main.swift macos/Desktop.swift macos/DesktopTools.swift macos/PatchCheck.swift macos/APIKeyStore.swift macos/IPhoneControl.swift -o "$app/Contents/MacOS/LocalChat"
 swiftc macos/Icon.swift -o "$stage/icon-generator"
 "$stage/icon-generator" "$stage/LocalChat.iconset"
 iconutil -c icns "$stage/LocalChat.iconset" -o "$app/Contents/Resources/LocalChat.icns"

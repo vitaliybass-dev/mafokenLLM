@@ -47,6 +47,7 @@ test("chat model choices override the default route without changing API profile
 
 test("model picker keeps its choice for consecutive sends and after reloading the chat", async () => {
   const appSource = readFileSync(new URL("../app.js", import.meta.url), "utf8").split("\nbootWorkspace();")[0];
+  const spendingSource=readFileSync(new URL("../spending.js", import.meta.url),"utf8");
   const storage = new Map();
   const requests = [];
   function loadChat() {
@@ -60,14 +61,14 @@ test("model picker keeps its choice for consecutive sends and after reloading th
       projects:[], pending:[], voice:null, taskBusy:false, draftLoading:false,
       accountFetch:null, chatgptAccount:{}, clearNotice(){}, storageWarning(){},
       localContext:()=>({context:"",entries:[],images:[],instructions:""}),
-      saveDraftText(){}, showPending(){}, AbortController, TextDecoder,
+      saveDraftText(){}, showPending(){}, AbortController, TextDecoder, crypto,
       fetch:async (_url, {body})=>{
         requests.push(JSON.parse(body));
         return new Response('{"source":"Test API","model":"selected","cloud":true}\n{"delta":"OK"}\n{"done":true}\n');
       }
     });
   }
-  const install = context => vm.runInContext(source + "\n" + appSource + `
+  const install = context => vm.runInContext(source + "\n" + spendingSource + "\n" + appSource + `
     sync = render = bottom = () => {};
     messageNode = () => ({update(){}});
   `, context);
@@ -89,6 +90,8 @@ test("model picker keeps its choice for consecutive sends and after reloading th
     await vm.runInContext(`$("draft").value = "${draft}"; generate();`, context);
   }
   assert.equal(requests.length, 2);
+  assert.equal(vm.runInContext("active.messages.filter(m=>m.content==='OK' && !m.error).length",context),2);
+  assert.equal([...storage.keys()].filter(k=>k.startsWith("mafoken.usage.")).length,2);
   assert.ok(requests.every(request=>request.mode === "cloud" && request.provider.model === "selected"));
   assert.ok(![...storage.values()].some(value=>value.includes("test-key")));
 

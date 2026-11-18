@@ -76,6 +76,15 @@ class IPhoneTests(unittest.TestCase):
         self.assertEqual(self.call("/api/screenshot", token=token)[0], 404)
         self.assertEqual(self.call("/api/command", {"kind": "mute"}, token)[0], 409)
         self.assertEqual(self.state.manage({"action": "status"})["command"]["id"], identifier)
+        _, pending = self.call("/api/command", token=token)
+        waiting = json.loads(pending)
+        self.assertEqual(waiting["pending"], identifier)
+        self.assertTrue(0 < waiting["remaining"] <= 60)
+        self.assertFalse(waiting["executing"])
+        self.state.manage({"action": "approve", "id": identifier})
+        self.assertTrue(json.loads(self.call("/api/command", token=token)[1])["executing"])
+        with self.assertRaises(ValueError):
+            self.state.manage({"action": "approve", "id": identifier})
         image = b"\xff\xd8fixture"
         self.state.manage({"action": "result", "id": identifier, "message": "approved", "jpeg": base64.b64encode(image).decode()})
         self.assertEqual(self.call("/api/screenshot", token=token), (200, image))

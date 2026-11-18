@@ -288,6 +288,7 @@ class Handler(BaseHTTPRequestHandler):
                   "/app.js": ("app.js", "text/javascript"),
                   "/style.css": ("style.css", "text/css"),
                   "/workspace.js": ("workspace.js", "text/javascript"),
+                  "/spending.js": ("spending.js", "text/javascript"),
                   "/connections.js": ("connections.js", "text/javascript"),
                   "/accounts.js": ("accounts.js", "text/javascript")}
         if self.path in assets:

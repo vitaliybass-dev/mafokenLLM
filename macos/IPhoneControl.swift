@@ -38,6 +38,8 @@ final class IPhoneControl {
     private var login: String?
     private var working = false
     private var lastShown: String?
+    private weak var pairingSheet: NSWindow?
+    private weak var approvalSheet: NSWindow?
 
     init(nonce: String, window: @escaping () -> NSWindow?, openDesktop: @escaping () -> Void) {
         self.nonce = nonce
@@ -107,6 +109,7 @@ final class IPhoneControl {
         alert.addButton(withTitle: "Скопировать адрес")
         alert.addButton(withTitle: "Новый код")
         alert.addButton(withTitle: "Отключить доступ")
+        if !status.paired { pairingSheet = alert.window }
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             switch response {
@@ -130,9 +133,21 @@ final class IPhoneControl {
                 try? await Task.sleep(for: .seconds(1.2))
                 guard !Task.isCancelled else { break }
                 guard let status = try? await request(["action": "status"]), !Task.isCancelled else { continue }
-                if let command = status.command { present(command) }
+                updateConnection(status)
             }
         }
+    }
+
+    private func updateConnection(_ status: Status) {
+        if status.paired, let sheet = pairingSheet, let parent = sheet.sheetParent {
+            pairingSheet = nil
+            parent.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        }
+        if status.command?.id != lastShown, let sheet = approvalSheet, let parent = sheet.sheetParent {
+            approvalSheet = nil
+            parent.endSheet(sheet, returnCode: .cancel)
+        }
+        if let command = status.command { present(command) }
     }
 
     private func present(_ command: Status.Command) {
@@ -152,10 +167,12 @@ final class IPhoneControl {
         alert.informativeText = text
         alert.addButton(withTitle: "Выполнить")
         alert.addButton(withTitle: "Отклонить")
+        approvalSheet = alert.window
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             Task {
-                guard let status = try? await self.request(["action": "status"]),
+                let action = response == .alertFirstButtonReturn ? "approve" : "status"
+                guard let status = try? await self.request(["action": action, "id": command.id]),
                       status.command?.id == command.id else { return }
                 var message = "Запрос отклонён на Mac."
                 var result: [String: Any] = ["action":"result", "id":command.id]

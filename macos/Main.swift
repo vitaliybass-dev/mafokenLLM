@@ -40,14 +40,15 @@ final class LocalChatDelegate: NSObject, NSApplicationDelegate, WKNavigationDele
         buildMenu()
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
-        let apiKeyMessages = APIKeyMessages { [weak self] message in
+        let authorize: (WKScriptMessage) -> Bool = { [weak self] message in
             guard let self else { return false }
             let frame = message.frameInfo
             return message.webView === self.web && frame.isMainFrame &&
                 frame.securityOrigin.protocol == "http" && frame.securityOrigin.host == "127.0.0.1" &&
                 frame.securityOrigin.port == self.origin.port && self.isInternal(frame.request.url)
         }
-        configuration.userContentController.addScriptMessageHandler(apiKeyMessages, contentWorld: .page, name: "mafokenAPIKey")
+        configuration.userContentController.addScriptMessageHandler(PatchMessages(authorized: authorize), contentWorld: .page, name: "mafokenPatch")
+        configuration.userContentController.addScriptMessageHandler(APIKeyMessages(authorized: authorize), contentWorld: .page, name: "mafokenAPIKey")
         let accountClient = """
             (() => {
                 if (location.origin !== 'http://127.0.0.1:8771') return;

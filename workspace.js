@@ -45,8 +45,10 @@ async function storeComposerFiles(id, files) {
       transaction.oncomplete = resolve;
       transaction.onabort = () => reject(transaction.error);
     });
+    return true;
   } catch {
-    storageWarning("Не удалось сохранить вложения на диск. Они доступны до закрытия приложения.");
+    storageWarning("Не удалось сохранить вложения на диск. Проверьте свободное место.");
+    return false;
   }
 }
 
@@ -138,6 +140,7 @@ function refreshCanvas() {
   $("canvasText").value = active.canvas?.text || "";
   $("diffPreview").hidden = true;
   $("canvasUndo").hidden = !active.canvasPrevious;
+  $("patchResult").hidden = true;
 }
 function projectChoices(select, first, selected) {
   select.replaceChildren(new Option(first,""),...projects.map(p => new Option(p.name,p.id)));
@@ -252,6 +255,31 @@ async function addFiles(files, target, report) {
   if (target===pending) showPending(true); else showProjectFiles();
   sync();
   report(errors.length ? errors.slice(0,3).join(" · ") : "Файлы добавлены.");
+}
+async function refreshProjectFiles(files) {
+  if (taskBusy || busy || !files.length) return;
+  const picked=new Map(Array.from(files,f=>[f.webkitRelativePath.split("/").slice(1).join("/"),f]));
+  const draft=projectDraft;
+  taskBusy=true;
+  $("projectEdit").disabled=true;
+  sync();
+  $("projectStatus").textContent="Читаем выбранные файлы с диска…";
+  try {
+    const refreshed=[];
+    let total=0;
+    for (const previous of draft.files) {
+      const file=picked.get(previous.name);
+      if (!file) throw new Error("В выбранной папке отсутствует "+previous.name);
+      if (sensitivePath(previous.name) || file.size>maxInbox) throw new Error("Нельзя обновить "+previous.name);
+      const item=await localTool("extract",{name:previous.name,data:await asBase64(file)});
+      total+=item.text.length;
+      if (total>contextLimit) throw new Error("Обновлённые файлы превышают лимит контекста проекта.");
+      refreshed.push(item);
+    }
+    draft.files=refreshed; showProjectFiles();
+    $("projectStatus").textContent="Файлов обновлено: "+refreshed.length+". Нажмите «Сохранить».";
+  } catch (e) { $("projectStatus").textContent=e.message+" · Снимки проекта сохранены в прежнем виде."; }
+  finally { taskBusy=false; $("projectEdit").disabled=false; sync(); }
 }
 function folderPicker(files) {
   const supported = /\.(?:md|txt|csv|tsv|js|jsx|ts|tsx|json|yaml|yml|toml|css|html|py|rb|go|rs|swift|java|kt|sql|sh|php|vue|svelte|c|cpp|h|hpp)$/i;
@@ -409,6 +437,10 @@ function bootWorkspace() {
       try { localStorage.removeItem("localchat.draft." + target.id); } catch {}
       composerFiles.delete(target.id);
       void storeComposerFiles(target.id, []);
+      const kept = new Set(chats.flatMap(c=>c.messages.map(m=>m.uploadId)));
+      for (const message of target.messages) {
+        if (message.uploadId && !kept.has(message.uploadId)) void storeComposerFiles(message.uploadId, []);
+      }
     }
     $("chatDialog").close();
     if (chats.length) selectChat(chats.find(chat=>!chat.archived) || chats[0]); else newChat();
@@ -454,6 +486,11 @@ function bootWorkspace() {
     addFiles(e.target.files,projectDraft.files,t=>{$("projectStatus").textContent=t;});
     e.target.value="";
   };
+  $("refreshProject").onclick=()=>{
+    if (!projectDraft.files.length) { $("projectStatus").textContent="Сначала добавьте файлы проекта."; return; }
+    $("refreshFolderUpload").click();
+  };
+  $("refreshFolderUpload").onchange=e=>{ void refreshProjectFiles(Array.from(e.target.files)); e.target.value=""; };
   $("projectFolder").onclick = () => $("folderUpload").click();
   $("folderUpload").onchange = e => { folderPicker(e.target.files); e.target.value=""; };
   $("prefs").onclick = () => {
@@ -479,6 +516,7 @@ function bootWorkspace() {
   };
   $("draft").oninput = saveDraftText;
   for (const id of ["canvasName","canvasText"]) $(id).oninput=()=>{
+    $("patchResult").hidden=true;
     active.canvas={name:$("canvasName").value,text:$("canvasText").value};
     $("diffPreview").hidden=true;
     save();
@@ -489,6 +527,22 @@ function bootWorkspace() {
     pending.push({name:$("canvasName").value.trim() || "редактор.md",text:text.slice(0,24000),truncated:text.length>24000});
     showPending(true); $("draft").focus();
     if (window.innerWidth<940) $("canvasPane").hidden=true;
+  };
+  const patchBridge=globalThis.webkit?.messageHandlers?.mafokenPatch;
+  $("checkPatch").hidden=!patchBridge;
+  $("checkPatch").onclick=async ()=>{
+    const chat=active, patch=$("canvasText").value;
+    const result=$("patchResult");
+    result.hidden=false;
+    if (!patch.trim()) { result.textContent="Вставьте unified diff в редактор."; return; }
+    $("checkPatch").disabled=true;
+    result.textContent="Выберите папку проекта на Mac…";
+    try {
+      const output=await patchBridge.postMessage(patch);
+      if (chat===active && patch===$("canvasText").value) { result.textContent=output; result.hidden=!output; }
+    } catch (e) {
+      if (chat===active && patch===$("canvasText").value) result.textContent=e.message || "Ошибка проверки.";
+    } finally { $("checkPatch").disabled=false; }
   };
   $("canvasPreview").onclick = () => {
     const preview = $("diffPreview");

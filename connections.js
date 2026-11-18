@@ -9,6 +9,27 @@ const connectionAccounts = new Map([
 ]);
 const connectionChecks = new Map();
 const connectionReplies = new Map();
+const runningProbes = new Set();
+function rememberCatalog(id, model, result) {
+  const previous=connectionChecks.get(id);
+  connectionChecks.set(id,{model,models:result.models,partial:result.partial,automatic:previous?.automatic,
+    at:Date.now(),state:result.models.includes(model) ? "verified" : result.partial ? "unsupported" : "not_listed"});
+}
+function rememberReply(id, reply) {
+  if (!connectionReplies.has(id)) connectionReplies.set(id,new Map());
+  connectionReplies.get(id).set(reply.model,reply);
+}
+function displayedProfile(id) {
+  const target=currentTarget();
+  return target.mode==="cloud" && target.profileId===id ? target.provider : settings.providers[id];
+}
+function catalogDetail(id,model) {
+  const check=connectionChecks.get(id);
+  if (check?.pending) return "Каталог проверяется";
+  if (check?.models?.includes(model) || (check?.model===model && check.state==="verified" && !check.hasBalance)) return "Модель есть в каталоге";
+  if (check?.models && !check.partial || check?.model===model && check.state==="not_listed") return "Модели нет в каталоге";
+  return check?.model===model && check.state==="error" ? "Ошибка проверки каталога" : "Каталог не подтверждён";
+}
 let pickerRevision=0;
 
 function chooseTarget(choice, mode, defaultModel, preset, profiles) {
@@ -147,6 +168,7 @@ function setupNextPicker() {
         options=result.models.map(id=>new Option(id,id));
       }
       if (revision!==pickerRevision || !dialog.open) return;
+      if (source in presets) rememberCatalog(source,selected,result);
       const actual=options.length;
       if (selected && source==="plan" && !options.some(o=>o.value===selected))
         options.unshift(new Option(selected+" · не найдена",selected));
@@ -220,10 +242,10 @@ function renderRoute() {
     detail=[target.planModel,privacy].filter(Boolean).join(" · ");
   } else {
     title=route.kind==="auto" ? "Авто · Mac или API " + apiResource(profile) : "API · " + apiResource(profile);
-    const last=connectionReplies.get(target.profileId);
-    const check=connectionChecks.get(target.profileId);
+    const last=connectionReplies.get(target.profileId)?.get(profile.model);
     detail=[apiOwner(profile),route.kind==="auto" ? "Mac выбирает маршрут" : profile.model,
-      last?.model === profile?.model && last?.ok === false ? "последний запрос без ответа" : check?.state === "error" ? "проверка подключения не прошла" : "",privacy].filter(Boolean).join(" · ");
+      apiKeyBridge ? "Ключ сохранён" : "Ключ в сеансе",catalogDetail(target.profileId,profile.model),
+      last ? (last.ok ? "Ответ получен" : "Ошибка генерации") : "Генерация не проверена",privacy].filter(Boolean).join(" · ");
   }
   const choice=active.modelChoice;
   if (choice && !busy && route.kind==="blocked") {
@@ -247,8 +269,9 @@ function connectionReady(id) {
 
 function connectionButton() {
   const count = Object.keys(presets).filter(connectionReady).length;
+  const answered=Object.keys(presets).filter(id=>connectionReady(id) && connectionReplies.get(id)?.get(displayedProfile(id)?.model)?.ok).length;
   $("connections").textContent = count || chatgptAccount.sharing
-    ? "Аккаунты и API · " + [count ? "API: "+count : "",chatgptAccount.sharing ? "ChatGPT" : ""].filter(Boolean).join(" + ")
+    ? "Аккаунты и API · " + [count ? "API: "+count+" · ответили: "+answered : "",chatgptAccount.sharing ? "ChatGPT" : ""].filter(Boolean).join(" + ")
     : "Аккаунты и API";
 }
 
@@ -258,7 +281,7 @@ function connectionChanged(id, oldProfile, oldKey) {
   if (endpointChanged || (oldKey && apiKeys.get(id) && oldKey !== apiKeys.get(id))) {
     delete settings.balanceSnapshots[id];
   }
-  if (endpointChanged || oldProfile?.model !== profile.model || (oldProfile?.network || "") !== (profile.network || "") || oldKey !== apiKeys.get(id)) {
+  if (endpointChanged || oldProfile?.kind !== profile.kind || oldProfile?.model !== profile.model || (oldProfile?.network || "") !== (profile.network || "") || oldKey !== apiKeys.get(id)) {
     connectionChecks.delete(id);
     connectionReplies.delete(id);
   }
@@ -313,23 +336,24 @@ function renderConnections() {
     Number(connectionReady(b))-Number(connectionReady(a)) ||
     Number(b===settings.preset)-Number(a===settings.preset));
   list.replaceChildren(...order.map(id => {
-    const profile = settings.providers[id];
+    const profile = displayedProfile(id);
     const key = apiKeys.get(id);
     const check = connectionChecks.get(id);
     const account = connectionAccounts.get(profile?.endpoint);
-    const reply = connectionReplies.get(id);
-    const [badge, color] = reply && !check ? ["Ключ есть",""] : connectionBadge(profile,key,check);
+    const reply = connectionReplies.get(id)?.get(profile?.model);
+    const [badge, color] = connectionBadge(profile,key,check?.model===profile?.model ? check : null);
     const card = el("article",undefined,"connection-card");
     const top = el("div",undefined,"connection-row");
     const name = el("strong",presets[id].name);
     const tags = el("div",undefined,"connection-tags");
     tags.append(el("span",badge,"connection-status " + color));
-    if (id === settings.preset && connectionReady(id)) tags.append(el("span","Выбран для API","connection-status chosen"));
+    if (id === settings.preset && connectionReady(id)) tags.append(el("span","API по умолчанию","connection-status chosen"));
     if (reply && !check?.pending && (!check?.at || reply.at >= check.at)) {
       tags.append(el("span",reply.ok ? "Ответ получен" : "Последний запрос без ответа","connection-status " + (reply.ok ? "good" : "warning")));
     }
     top.append(name,tags);
     card.append(top);
+    if (key) card.append(el("small",(apiKeyBridge ? "Ключ сохранён в macOS" : "Ключ введён для сеанса")+" · "+catalogDetail(id,profile?.model)));
     if (profile?.model) card.append(el("small",profile.model,"connection-model"));
     if (profile?.endpoint) {
       const host=endpointHost(profile.endpoint);
@@ -338,6 +362,7 @@ function renderConnections() {
     }
     if (reply) card.append(el("small","Генерация: " + (reply.ok ? "получен полный ответ" : "полный ответ не подтверждён") + (reply.model ? " · "+reply.model : "") + " · " + displayTime(reply.at)));
     else if (key) card.append(el("small","Генерация в этом сеансе не проверена."));
+    if (reply?.error) card.append(el("small",reply.error,"connection-warning"));
     if (check?.at) card.append(el("small","Проверка без генерации · " + displayTime(check.at)));
     const [amount, detail] = balanceLine(profile,check,settings.balanceSnapshots[id]);
     const balance = el("div",undefined,"connection-balance");
@@ -359,6 +384,12 @@ function renderConnections() {
       manual.onclick = () => openBalance(id);
       actions.append(manual);
     }
+    if (key && profile?.model) {
+      const test=el("button",runningProbes.has(id) ? "Ожидаем ответ…" : "Проверить коротким запросом");
+      test.type="button"; test.disabled=runningProbes.has(id);
+      test.onclick=()=>probeConnection(id);
+      actions.append(test);
+    }
     const edit = el("button","Настроить");
     edit.type = "button";
     edit.onclick = () => openModelSettings(id);
@@ -377,9 +408,9 @@ function renderConnections() {
 async function verifyConnections() {
   const checks = Object.keys(presets).filter(connectionReady);
   const jobs = checks.map(async id => {
-    const {endpoint,model,kind,network} = settings.providers[id];
+    const {endpoint,model,kind,network} = displayedProfile(id);
     const key = apiKeys.get(id);
-    const current = {pending:true, automatic:connectionChecks.get(id)?.automatic};
+    const current = {pending:true, model, automatic:connectionChecks.get(id)?.automatic};
     connectionChecks.set(id,current);
     try {
       const official=connectionAccounts.has(endpoint);
@@ -388,6 +419,13 @@ async function verifyConnections() {
       if (!official && result.state==="verified" && !result.models.includes(model)) {
         result.state = result.partial ? "unsupported" : "not_listed";
         result.message = result.partial ? "Каталог неполный; доступ к выбранной модели неизвестен." : "Каталог не подтвердил доступ к выбранной модели.";
+      }
+      current.models=result.models;
+      current.partial=result.partial;
+      if (result.balances) {
+        current.automatic = {balances:result.balances,at:Date.now()};
+        const catalog=await localTool("cloud-models",{endpoint,kind,key,network});
+        if (catalog.state==="verified") { current.models=catalog.models; current.partial=catalog.partial; }
       }
       current.state = result.state;
       current.message = result.message;
@@ -404,6 +442,38 @@ async function verifyConnections() {
   });
   renderConnections();
   await Promise.all(jobs);
+}
+
+async function probeConnection(id) {
+  const profile=displayedProfile(id), key=apiKeys.get(id);
+  if (runningProbes.has(id) || !key || !profile?.model) return;
+  const owner=apiOwner(profile);
+  const accepted=await confirmAction("Проверить генерацию?",[profile.model,apiResource(profile),owner,
+    "Будет отправлен отдельный тест без истории и файлов. Лимит ответа — 128 токенов. Возможны расходы по тарифу API."].join(" · "),"Отправить тест");
+  if (!accepted || runningProbes.has(id)) return;
+  const configured=settings.providers[id];
+  runningProbes.add(id);
+  renderConnections();
+  let complete=false, text=false, error="", record;
+  try {
+    const response=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({mode:"cloud",model:"",provider:{...profile,maxTokens:128},key,allowCloud:true,
+        messages:[{role:"user",content:"Ответь одним словом: ОК."}]})});
+    for await (const packet of responsePackets(response)) {
+      if (packet.source && !record) record=startUsage("api",profile.model,id,profile,owner,true);
+      if (record && packet.usage) writeUsage(record,packet.usage);
+      if (packet.delta) text=true;
+      if (packet.error) throw new Error(packet.error);
+      if (packet.done) complete=true;
+    }
+    if (!complete || !text) throw new Error("Провайдер не вернул полный ответ.");
+  } catch (failure) { error=failure.message || "Не удалось получить ответ."; }
+  finally {
+    if (settings.providers[id]===configured && apiKeys.get(id)===key)
+      rememberReply(id,{ok:complete && text && !error,model:profile.model,error,at:Date.now()});
+    runningProbes.delete(id);
+    renderConnections();
+  }
 }
 
 function openBalance(id) {

@@ -64,3 +64,21 @@ test("native keys return after reload, stay bound to the address, and can be rem
   await app.field("config").onsubmit({preventDefault(){}});
   assert.equal(keychain.has("custom"), false);
 });
+
+test("switching profiles keeps the unsaved key and only an explicit selection changes the payer", async () => {
+  const app=loadApp(new Map());
+  const pick=id=>{ app.field("preset").value=id; app.field("preset").onchange(); };
+  app.run('showProvider("custom");');
+  app.field("endpoint").value=endpoint;
+  app.field("key").value=fixtureKey;
+  app.field("key").oninput();
+  app.field("cloudModel").value="fixture-model";
+  pick("deepseek");
+  pick("custom");
+  assert.equal(app.field("key").value,fixtureKey);
+  assert.equal(app.field("cloudModel").value,"fixture-model");
+  await app.field("config").onsubmit({preventDefault(){}});
+  assert.equal(app.run("settings.preset"),"openai");
+  await app.field("config").onsubmit({preventDefault(){},submitter:{id:"makeDefault"}});
+  assert.equal(app.run("settings.preset"),"custom");
+});

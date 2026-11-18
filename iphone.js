@@ -122,11 +122,14 @@ $("prompt").onsubmit = async event => {
 };
 
 async function commandResult() {
+  const id=pendingCommand, session=token;
   try {
     const result = await (await call("/api/command")).json();
-    if (result.result?.id === pendingCommand) {
+    if (session!==token || id!==pendingCommand) return;
+    if (result.result?.id === id) {
       if (result.result.screenshot) {
         const image = await (await call("/api/screenshot")).blob();
+        if (session!==token || id!==pendingCommand) return;
         if (imageURL) URL.revokeObjectURL(imageURL);
         imageURL = URL.createObjectURL(image);
         $("screen").src = imageURL;
@@ -136,7 +139,13 @@ async function commandResult() {
       pendingCommand = null;
       return;
     }
-    if (pendingCommand) poll = setTimeout(commandResult, 1600);
+    if (result.pending!==id) {
+      pendingCommand=null;
+      $("commandStatus").textContent="Запрос больше не ожидает подтверждения.";
+      return;
+    }
+    $("commandStatus").textContent=(result.executing ? "Mac выполняет команду." : "Подтвердите запрос в окне mafokenLLM на Mac.")+" Осталось "+result.remaining+" с.";
+    poll = setTimeout(commandResult, 1000);
   } catch (error) { $("commandStatus").textContent = error.message; pendingCommand = null; }
 }
 

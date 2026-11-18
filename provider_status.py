@@ -1,5 +1,6 @@
 """Read-only status checks for recognized provider endpoints."""
 import json
+import math
 import re
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -21,6 +22,25 @@ HTTP_STATUS = {
     404: "Провайдер не нашёл указанную модель.",
     429: "Провайдер ограничил частоту проверок. Повторите позже.",
 }
+
+
+JUNAI_CATALOG = "https://agents.ai.atechlab.ru/api/models"
+
+
+def usd_amount(value):
+    return type(value) in (int, float) and 0 <= value < 1e15 and math.isfinite(value)
+
+
+def junai_prices(request):
+    # Public model cards use USD per million tokens, also used by JunAI's own calculator.
+    with request(JUNAI_CATALOG, timeout=5) as upstream:
+        payload = json.loads(upstream.read(2 * 1024 * 1024))
+    prices = {}
+    for row in payload["data"]["models"]:
+        if (isinstance(row, dict) and isinstance(row.get("alias"), str)
+                and usd_amount(row.get("input_price")) and usd_amount(row.get("output_price"))):
+            prices[row["alias"]] = {"inputPrice": row["input_price"], "outputPrice": row["output_price"]}
+    return {"prices": prices}
 
 
 def deepseek_balance(payload):

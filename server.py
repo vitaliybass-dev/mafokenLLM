@@ -217,9 +217,16 @@ def deltas(upstream, kind):
                 choices = event.get("choices") or []
                 part = choices[0].get("delta", {}).get("content") if choices else None
                 complete = complete or bool(choices and choices[0].get("finish_reason"))
-                if event.get("usage"):
-                    yield {"usage": {"input": event["usage"].get("prompt_tokens"),
-                                     "output": event["usage"].get("completion_tokens")}}
+                usage = event.get("usage") or {}
+                report = {}
+                if usage:
+                    report.update(input=usage.get("prompt_tokens"), output=usage.get("completion_tokens"))
+                # Only accept a request amount with explicit currency, never daily/account totals.
+                charge = usage.get("cost_usd", usage.get("api_cost_usd", event.get("api_cost_usd")))
+                if provider_status.usd_amount(charge):
+                    report["reportedUSD"] = charge
+                if report:
+                    yield {"usage": report}
         if event.get("error") or event.get("type") == "error":
             raise ValueError("Модель вернула ошибку во время ответа.")
         if isinstance(part, str) and part:
@@ -337,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.manage_iphone()
         account_actions = {"/api/account/begin": "/begin", "/api/account/cancel": "/cancel",
                            "/api/account/disconnect": "/disconnect"}
-        if self.path not in ("/api/chat", "/api/extract", "/api/transcribe", "/api/connection-status", "/api/cloud-models", *account_actions):
+        if self.path not in ("/api/chat", "/api/extract", "/api/transcribe", "/api/connection-status", "/api/cloud-models", "/api/junai-prices", *account_actions):
             self.send_error(404)
             return
         if (not self.same_host() or self.headers.get("Origin") != "http://" + self.headers["Host"]
@@ -346,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            limit = 8192 if self.path in ("/api/connection-status", "/api/cloud-models") else 12 * LIMIT
+            limit = 8192 if self.path in ("/api/connection-status", "/api/cloud-models", "/api/junai-prices") else 12 * LIMIT
             if not 0 < length <= limit:
                 raise ValueError()
             data = json.loads(self.rfile.read(length))
@@ -532,6 +539,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = tools.extract(data)
             elif self.path == "/api/connection-status":
                 result = provider_status.check(data, provider_request(data))
+            elif self.path == "/api/junai-prices":
+                result = provider_status.junai_prices(provider_request(data))
             elif self.path == "/api/cloud-models":
                 result = provider_status.list_models(data, provider_request(data))
             else:

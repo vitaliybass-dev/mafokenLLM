@@ -239,7 +239,7 @@ function messageNode(message) {
     usage.textContent=counts && (counts.input!=null || counts.output!=null)
       ? "Токены: вход "+(counts.input?.toLocaleString("ru") ?? "н/д")+" · выход "+(counts.output?.toLocaleString("ru") ?? "н/д")
       : (kind==="api" || kind==="plan") && !busy ? "Токены не сообщены" : "";
-    if (kind==="api" && !busy) usage.textContent=[usage.textContent,"Списание уточняется в кабинете API"].filter(Boolean).join(" · ");
+    if (kind==="api" && !busy) usage.textContent=[usage.textContent,counts?.reportedUSD!=null ? "Сумма от API: "+counts.reportedUSD+" USD" : "Стоимость — в разделе «Расходы»"].filter(Boolean).join(" · ");
     fallback.textContent=message.fallback || "";
     fallback.hidden=!message.fallback;
     error.textContent=message.error || "";
@@ -626,7 +626,7 @@ async function generate(replace, savedFiles) {
         answer.fallback="API " + apiResource(provider) + " · " + chargedAccount + ": попытка была, списание неизвестно. Ответ продолжен на Mac.";
         delete answer.usage;
       }
-      if (packet.usage) { answer.usage=packet.usage; if (usageRecord) writeUsage(usageRecord,packet.usage); }
+      if (packet.usage) { answer.usage={...answer.usage,...packet.usage}; if (usageRecord) writeUsage(usageRecord,packet.usage); }
       if (packet.error) answer.error=packet.error;
       if (packet.done) complete=true;
       if (!active.temp && packet.delta && Date.now()-lastCheckpoint>=2500) { save(); lastCheckpoint=Date.now(); }
